@@ -1,58 +1,233 @@
-
 # 🤖 testdata-ai
 
 AI-powered test data generator for QA engineers.
 
 Generate realistic test data using GPT-4/Claude API - because `test@test.com` and `John Doe` aren't cutting it anymore.
 
----
-
-## 🚧 Status: In Development
-
-Building a tool that generates:
-- **Context-aware data** (e-commerce customers, banking users, SaaS trials, etc.)
-- **Realistic profiles** (diverse names, valid emails, actual addresses)
-- **Smart personas** (student vs senior citizen behavior patterns)
-- **Multiple formats** (JSON, CSV, SQL inserts)
+![Status](https://img.shields.io/badge/status-alpha-orange)
+![Python](https://img.shields.io/badge/python-3.9+-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
 
-## 🎯 Planned Features
+## ✨ What Works NOW
+```python
+from src.generator import TestDataGenerator
 
-- [x] Project setup
-- [ ] OpenAI/Anthropic API integration
-- [ ] CLI interface (`testdata-ai generate --context ecommerce --count 100`)
-- [ ] Multiple context templates
+# Initialize with OpenAI or Anthropic
+gen = TestDataGenerator()
+
+# Generate realistic customers
+customers = gen.generate("ecommerce_customer", count=10)
+
+# Output: 10 diverse, realistic profiles!
+print(customers[0])
+```
+
+**Sample Output:**
+```json
+{
+  "name": "Aisha Patel",
+  "email": "aisha.patel.2024@gmail.com",
+  "age": 28,
+  "location": {
+    "city": "Mumbai",
+    "country": "India"
+  },
+  "shopping_behavior": {
+    "frequency": "weekly",
+    "avg_order_value": "$45-80",
+    "preferred_categories": ["electronics", "books"],
+    "device": "mobile",
+    "payment_method": "upi"
+  }
+}
+```
+
+**Not** `test@test.com` anymore! 🎉
+
+---
+
+## 🚀 Quick Start
+
+### Installation
+```bash
+# Clone repo
+git clone https://github.com/testcraft-ai/testdata-ai.git
+cd testdata-ai
+
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # Mac/Linux
+# venv\Scripts\activate   # Windows
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Setup API key
+cp .env.example .env
+# Edit .env and add your OpenAI or Anthropic API key
+```
+
+### Usage
+```bash
+# Run example
+python examples/basic_usage.py
+
+# Or use programmatically
+python
+>>> from src.generator import TestDataGenerator
+>>> gen = TestDataGenerator()
+>>> customers = gen.generate("ecommerce_customer", count=5)
+>>> print(f"Generated {len(customers)} customers!")
+```
+
+---
+
+## 🎯 Features
+
+**Currently Working:**
+- ✅ **Provider-agnostic** - Use OpenAI (GPT-4) or Anthropic (Claude)
+- ✅ **Context-aware** - E-commerce customers (more contexts coming!)
+- ✅ **Realistic data** - Diverse names, valid emails, behavioral patterns
+- ✅ **Python API** - Use in your tests programmatically
+- ✅ **Type hints** - Full type safety with mypy
+
+**Coming Soon:**
+- ⏳ **CLI interface** - `testdata-ai generate --context banking --count 100`
+- ⏳ **10+ contexts** - Banking, SaaS, Healthcare, Education, etc.
+- ⏳ **Multiple formats** - JSON, CSV, SQL inserts
+- ⏳ **Pytest plugin** - Auto-generate test fixtures
+- ⏳ **PyPI package** - `pip install testdata-ai`
+
+---
+
+## 💡 Why testdata-ai?
+
+### Traditional Approach
+```python
+from faker import Faker
+fake = Faker()
+
+user = {
+    "name": "John Doe",           # Generic!
+    "email": "test123@example.com", # Obvious fake!
+    "age": 42                       # Random, no context
+}
+```
+
+**Problems:**
+- ❌ Everyone knows it's fake
+- ❌ No context awareness (e-commerce vs banking?)
+- ❌ No behavioral data (shopping patterns, preferences)
+- ❌ Manual effort for edge cases
+
+### testdata-ai Approach
+```python
+from src.generator import TestDataGenerator
+
+gen = TestDataGenerator()
+users = gen.generate("ecommerce_customer", count=100)
+```
+
+**Result:** 100 unique, realistic, context-aware profiles in ~10 seconds!
+
+**Advantages:**
+- ✅ Realistic profiles (diverse cultures, realistic emails)
+- ✅ Context-aware (shopping behavior matches demographics)
+- ✅ Behavioral patterns (age → preferences, location → payment methods)
+- ✅ Massive time savings (AI generates in seconds)
+
+---
+
+## 📖 Documentation
+
+- [Installation Guide](docs/installation.md) *(coming soon)*
+- [API Reference](docs/api-reference.md) *(coming soon)*
+- [Context Definitions](docs/contexts.md) *(coming soon)*
+
+For now, check:
+- [`examples/basic_usage.py`](examples/basic_usage.py) - Working example
+- [`.env.example`](.env.example) - Configuration template
+
+---
+
+## 🛠️ Configuration
+
+**Supported AI Providers:**
+- OpenAI (GPT-4, GPT-3.5)
+- Anthropic (Claude 3)
+
+**Setup:**
+```bash
+# .env file
+AI_PROVIDER=openai  # or 'anthropic'
+OPENAI_API_KEY=sk-your-key-here
+# or
+ANTHROPIC_API_KEY=sk-ant-your-key-here
+```
+
+See [`.env.example`](.env.example) for all options.
+
+---
+
+## 📊 Development Roadmap
+
+**Week 1** (Current):
+- [x] GitHub setup
+- [x] OpenAI/Anthropic API integration
+- [x] Core generator architecture
+- [x] E-commerce context working
+- [ ] More contexts (banking, SaaS)
+- [ ] Extract prompts to templates
+
+**Week 2-3:**
+- [ ] CLI interface (Click)
+- [ ] 10+ context templates
+- [ ] Output formatters (CSV, SQL)
+- [ ] Basic documentation
+
+**Week 4-6:**
 - [ ] Pytest plugin
-- [ ] PyPI package (`pip install testdata-ai`)
-- [ ] Comprehensive documentation
+- [ ] PyPI package
+- [ ] Comprehensive docs
+- [ ] v1.0 launch!
 
 ---
 
-## 💡 Why This Tool?
+## 🤝 Contributing
 
-Traditional test data generation:
-- ❌ Faker.py gives generic data (`test1@example.com`, `John Smith`)
-- ❌ Manual data creation is slow and boring
-- ❌ Data doesn't reflect real user behavior
+This is an active development project! Contributions welcome:
 
-testdata-ai solution:
-- ✅ AI understands context (e-commerce vs banking users are different!)
-- ✅ Generates diverse, realistic profiles
-- ✅ Saves hours of manual work
+- 🐛 **Found a bug?** Open an issue!
+- 💡 **Have an idea?** Start a discussion!
+- 🔧 **Want to code?** Fork and PR!
+
+*(CONTRIBUTING.md coming soon)*
 
 ---
 
-## 🌟 Follow Progress
+## 📝 License
 
-⭐ **Star this repo** to get notified when we launch!
+MIT License - see [LICENSE](LICENSE)
+
+---
+
+## 🌟 Star History
+
+⭐ **Star this repo** to follow progress and get notified when we launch v1.0!
+
+Building in public - watch this space! 🚀
 
 ---
 
 ## 📬 Contact
 
-Questions or suggestions? Open an issue or discussion!
+- **GitHub Issues:** Bug reports & feature requests
+- **Discussions:** Questions & ideas
 
 ---
 
 **Built with 💙 by [TestCraft AI](https://github.com/testcraft-ai)**
+
+*Day 2 of 42: Core architecture complete! 🎉*
