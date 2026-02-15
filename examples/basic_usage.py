@@ -2,9 +2,10 @@
 Basic usage example of testdata-ai generator.
 """
 
-from src.generator import TestDataGenerator
-from pathlib import Path
 import json
+from pathlib import Path
+
+from testdata_ai import TestDataGenerator
 
 
 def main():

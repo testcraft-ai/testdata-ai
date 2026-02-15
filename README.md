@@ -12,7 +12,7 @@ Generate realistic test data using GPT-4/Claude API - because `test@test.com` an
 
 ## ✨ What Works NOW
 ```python
-from src.generator import TestDataGenerator
+from testdata_ai import TestDataGenerator
 
 # Initialize with OpenAI or Anthropic
 gen = TestDataGenerator()
@@ -32,7 +32,8 @@ print(customers[0])
   "age": 28,
   "location": {
     "city": "Mumbai",
-    "country": "India"
+    "country": "India",
+    "timezone": "Asia/Kolkata"
   },
   "shopping_behavior": {
     "frequency": "weekly",
@@ -40,7 +41,9 @@ print(customers[0])
     "preferred_categories": ["electronics", "books"],
     "device": "mobile",
     "payment_method": "upi"
-  }
+  },
+  "joined_date": "2023-04-15",
+  "loyalty_tier": "silver"
 }
 ```
 
@@ -61,8 +64,10 @@ python -m venv venv
 source venv/bin/activate  # Mac/Linux
 # venv\Scripts\activate   # Windows
 
-# Install dependencies
-pip install -r requirements.txt
+# Install package (with your preferred provider)
+pip install -e ".[openai]"    # OpenAI only
+pip install -e ".[anthropic]" # Anthropic only
+pip install -e ".[all]"       # Both providers
 
 # Setup API key
 cp .env.example .env
@@ -76,7 +81,7 @@ python examples/basic_usage.py
 
 # Or use programmatically
 python
->>> from src.generator import TestDataGenerator
+>>> from testdata_ai import TestDataGenerator
 >>> gen = TestDataGenerator()
 >>> customers = gen.generate("ecommerce_customer", count=5)
 >>> print(f"Generated {len(customers)} customers!")
@@ -88,14 +93,14 @@ python
 
 **Currently Working:**
 - ✅ **Provider-agnostic** - Use OpenAI (GPT-4) or Anthropic (Claude)
-- ✅ **Context-aware** - E-commerce customers (more contexts coming!)
+- ✅ **Context-aware** - E-commerce, Banking, SaaS (more coming!)
 - ✅ **Realistic data** - Diverse names, valid emails, behavioral patterns
 - ✅ **Python API** - Use in your tests programmatically
 - ✅ **Type hints** - Full type safety with mypy
 
 **Coming Soon:**
 - ⏳ **CLI interface** - `testdata-ai generate --context banking --count 100`
-- ⏳ **10+ contexts** - Banking, SaaS, Healthcare, Education, etc.
+- ⏳ **10+ contexts** - Healthcare, Education, Social, etc.
 - ⏳ **Multiple formats** - JSON, CSV, SQL inserts
 - ⏳ **Pytest plugin** - Auto-generate test fixtures
 - ⏳ **PyPI package** - `pip install testdata-ai`
@@ -124,7 +129,7 @@ user = {
 
 ### testdata-ai Approach
 ```python
-from src.generator import TestDataGenerator
+from testdata_ai import TestDataGenerator
 
 gen = TestDataGenerator()
 users = gen.generate("ecommerce_customer", count=100)
@@ -155,8 +160,8 @@ For now, check:
 ## 🛠️ Configuration
 
 **Supported AI Providers:**
-- OpenAI (GPT-4, GPT-3.5)
-- Anthropic (Claude 3)
+- OpenAI (GPT-4)
+- Anthropic (Claude)
 
 **Setup:**
 ```bash
@@ -173,13 +178,12 @@ See [`.env.example`](.env.example) for all options.
 
 ## 📊 Development Roadmap
 
-**Week 1** (Current):
+**Week 1** (Done):
 - [x] GitHub setup
 - [x] OpenAI/Anthropic API integration
 - [x] Core generator architecture
-- [x] E-commerce context working
-- [ ] More contexts (banking, SaaS)
-- [ ] Extract prompts to templates
+- [x] E-commerce, Banking, SaaS contexts
+- [x] Data-driven prompt builder
 
 **Week 2-3:**
 - [ ] CLI interface (Click)
@@ -230,4 +234,4 @@ Building in public - watch this space! 🚀
 
 **Built with 💙 by [TestCraft AI](https://github.com/testcraft-ai)**
 
-*Day 2 of 42: Core architecture complete! 🎉*
+*Building in public -- follow the progress!*

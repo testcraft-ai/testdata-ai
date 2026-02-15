@@ -50,18 +50,16 @@ dmypy.json
 examples/output_*.json
 examples/output_*.csv
 examples/output_*.sql
-examples.generated_*
+examples/generated_*
 test_output/
-*.json
-*.csv
-*.sql
+output_data.*
 generated_data.*
 
 # Logs
 *.log
 logs/
 
-#Temporary files
+# Temporary files
 *.tmp
 *.temp
 .cache/
