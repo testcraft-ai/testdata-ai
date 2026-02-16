@@ -27,6 +27,7 @@ classifiers = [
 
 dependencies = [
     "python-dotenv>=1.0.0",
+    "click>=8.0.0",
 ]
 
 [project.optional-dependencies]
@@ -44,6 +45,9 @@ Homepage = "https://github.com/testcraft-ai/testdata-ai"
 Documentation = "https://github.com/testcraft-ai/testdata-ai/blob/main/README.md"
 Repository = "https://github.com/testcraft-ai/testdata-ai"
 "Bug Tracker" = "https://github.com/testcraft-ai/testdata-ai/issues"
+
+[project.scripts]
+testdata-ai = "testdata_ai.cli:cli"
 
 [tool.setuptools]
 packages = ["testdata_ai"]

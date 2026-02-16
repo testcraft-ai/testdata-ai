@@ -31,7 +31,10 @@ def get_prompt(context: str, count: int) -> str:
     sample_json = json.dumps(schema.sample, indent=2)
 
     return (
-        f"Generate {count} realistic {schema.description}.\n"
+        f"Generate exactly {count} realistic {schema.description}.\n"
+        f"\n"
+        f"Return a JSON object with a \"data\" key containing an array "
+        f"of exactly {count} objects. Example: {{\"data\": [...]}}\n"
         f"\n"
         f"Requirements for realistic data:\n"
         f"{hints}\n"

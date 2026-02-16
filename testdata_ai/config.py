@@ -25,7 +25,7 @@ class AIProviderConfig:
     api_key: str = field(repr=False)
     model: str
     temperature: float = 0.7
-    max_tokens: int = 2000
+    max_tokens: int = 4096
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.temperature <= 1.0:
@@ -68,5 +68,5 @@ def get_provider_config(provider: Optional[str] = None) -> AIProviderConfig:
         api_key=api_key,
         model=os.getenv(f"{prefix}_MODEL", DEFAULT_MODELS[provider]),
         temperature=float(os.getenv(f"{prefix}_TEMPERATURE", "0.7")),
-        max_tokens=int(os.getenv(f"{prefix}_MAX_TOKENS", "2000")),
+        max_tokens=int(os.getenv(f"{prefix}_MAX_TOKENS", "4096")),
     )

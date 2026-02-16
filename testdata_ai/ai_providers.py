@@ -50,7 +50,7 @@ class OpenAIProvider(AIProvider):
             from openai import OpenAI
         except ImportError:
             raise ImportError("openai package is required: pip install openai")
-        self.client = OpenAI(api_key=api_key, timeout=60.0, max_retries=3)
+        self.client = OpenAI(api_key=api_key, timeout=120.0, max_retries=3)
 
     def generate(self, prompt: str, system_prompt: str = DEFAULT_SYSTEM_PROMPT) -> str:
         messages = []
@@ -68,6 +68,11 @@ class OpenAIProvider(AIProvider):
             )
         except Exception as e:
             logger.error(f"OpenAI API error: {e}")
+            if "timed out" in str(e).lower():
+                raise RuntimeError(
+                    f"Request to OpenAI timed out ({self.model}). "
+                    f"Try reducing --count or using a faster model like gpt-4o-mini."
+                ) from e
             raise RuntimeError(f"Failed to generate data with OpenAI: {e}") from e
 
         content = response.choices[0].message.content
@@ -86,7 +91,7 @@ class AnthropicProvider(AIProvider):
             from anthropic import Anthropic
         except ImportError:
             raise ImportError("anthropic package is required: pip install anthropic")
-        self.client = Anthropic(api_key=api_key, timeout=60.0, max_retries=3)
+        self.client = Anthropic(api_key=api_key, timeout=120.0, max_retries=3)
 
     def generate(self, prompt: str, system_prompt: str = DEFAULT_SYSTEM_PROMPT) -> str:
         try:
@@ -99,6 +104,11 @@ class AnthropicProvider(AIProvider):
             )
         except Exception as e:
             logger.error(f"Anthropic API error: {e}")
+            if "timed out" in str(e).lower():
+                raise RuntimeError(
+                    f"Request to Anthropic timed out ({self.model}). "
+                    f"Try reducing --count or using a faster model."
+                ) from e
             raise RuntimeError(f"Failed to generate data with Anthropic: {e}") from e
 
         if not response.content:

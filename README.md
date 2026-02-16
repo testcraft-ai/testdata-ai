@@ -2,7 +2,7 @@
 
 AI-powered test data generator for QA engineers.
 
-Generate realistic test data using GPT-4/Claude API - because `test@test.com` and `John Doe` aren't cutting it anymore.
+Generate realistic, context-aware test data using GPT-4 or Claude - because `test@test.com` and `John Doe` aren't cutting it anymore.
 
 ![Status](https://img.shields.io/badge/status-alpha-orange)
 ![Python](https://img.shields.io/badge/python-3.9+-blue)
@@ -10,21 +10,59 @@ Generate realistic test data using GPT-4/Claude API - because `test@test.com` an
 
 ---
 
-## ✨ What Works NOW
+## Quick Start
+
+### Install
+
+```bash
+git clone https://github.com/testcraft-ai/testdata-ai.git
+cd testdata-ai
+python -m venv venv && source venv/bin/activate
+
+pip install -e ".[openai]"      # OpenAI only
+# pip install -e ".[anthropic]" # Anthropic only
+# pip install -e ".[all]"       # Both providers
+
+cp .env.example .env
+# Edit .env and add your API key
+```
+
+### CLI
+
+```bash
+# Generate 10 e-commerce customers (JSON to stdout)
+testdata-ai generate --context ecommerce_customer --count 10
+
+# Save as JSON file
+testdata-ai generate --context banking_user --count 20 -o users.json
+
+# Export as CSV
+testdata-ai generate --context saas_trial --count 50 -f csv -o trials.csv
+
+# List available contexts
+testdata-ai list-contexts
+
+# Show context details (fields, sample, hints)
+testdata-ai show-context ecommerce_customer
+```
+
+### Python API
+
 ```python
 from testdata_ai import TestDataGenerator
 
-# Initialize with OpenAI or Anthropic
 gen = TestDataGenerator()
 
-# Generate realistic customers
-customers = gen.generate("ecommerce_customer", count=10)
+# Generate 5 realistic e-commerce customers
+customers = gen.generate("ecommerce_customer", count=5)
 
-# Output: 10 diverse, realistic profiles!
-print(customers[0])
+# Also works for banking and SaaS contexts
+bank_users = gen.generate("banking_user", count=10)
+saas_trials = gen.generate("saas_trial", count=10)
 ```
 
-**Sample Output:**
+**Sample output:**
+
 ```json
 {
   "name": "Aisha Patel",
@@ -47,191 +85,172 @@ print(customers[0])
 }
 ```
 
-**Not** `test@test.com` anymore! 🎉
+Not `test@test.com` anymore.
 
 ---
 
-## 🚀 Quick Start
+## Features
 
-### Installation
-```bash
-# Clone repo
-git clone https://github.com/testcraft-ai/testdata-ai.git
-cd testdata-ai
+- **Provider-agnostic** -- OpenAI (GPT-4o, GPT-4o-mini) or Anthropic (Claude)
+- **13 built-in contexts** -- E-commerce, Banking, SaaS, Healthcare, Education, B2B, HR, Real Estate, IoT, Social Media, Travel, Restaurant, Logistics
+- **CLI + Python API** -- Use from terminal or in your test code
+- **Output formats** -- JSON and CSV
+- **Context-aware data** -- Shopping behavior matches demographics, payment methods match location
+- **Schema validation** -- Ensures generated data has all required fields
+- **Smart token management** -- Auto-detects when more tokens are needed, prompts before generating
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # Mac/Linux
-# venv\Scripts\activate   # Windows
+### CLI Options
 
-# Install package (with your preferred provider)
-pip install -e ".[openai]"    # OpenAI only
-pip install -e ".[anthropic]" # Anthropic only
-pip install -e ".[all]"       # Both providers
+```
+testdata-ai generate [OPTIONS]
 
-# Setup API key
-cp .env.example .env
-# Edit .env and add your OpenAI or Anthropic API key
+Options:
+  --context TEXT              Context name (required)
+  --count INTEGER             Number of records [default: 10]
+  -o, --output PATH           Output file (default: stdout)
+  -f, --format [json|csv]     Output format [default: json]
+  --provider TEXT              AI provider override
+  --model TEXT                 Model name override
+  --max-tokens INTEGER         Max tokens for AI response
+  --temperature FLOAT          Sampling temperature 0.0-1.0
+  --no-validate               Skip schema validation
+  -q, --quiet                  Suppress status messages (data only)
+  --help                      Show help
 ```
 
-### Usage
-```bash
-# Run example
-python examples/basic_usage.py
+Also available as a Python module:
 
-# Or use programmatically
-python
->>> from testdata_ai import TestDataGenerator
->>> gen = TestDataGenerator()
->>> customers = gen.generate("ecommerce_customer", count=5)
->>> print(f"Generated {len(customers)} customers!")
+```bash
+python -m testdata_ai generate --context ecommerce_customer --count 5
 ```
 
 ---
 
-## 🎯 Features
+## Why testdata-ai?
 
-**Currently Working:**
-- ✅ **Provider-agnostic** - Use OpenAI (GPT-4) or Anthropic (Claude)
-- ✅ **Context-aware** - E-commerce, Banking, SaaS (more coming!)
-- ✅ **Realistic data** - Diverse names, valid emails, behavioral patterns
-- ✅ **Python API** - Use in your tests programmatically
-- ✅ **Type hints** - Full type safety with mypy
-
-**Coming Soon:**
-- ⏳ **CLI interface** - `testdata-ai generate --context banking --count 100`
-- ⏳ **10+ contexts** - Healthcare, Education, Social, etc.
-- ⏳ **Multiple formats** - JSON, CSV, SQL inserts
-- ⏳ **Pytest plugin** - Auto-generate test fixtures
-- ⏳ **PyPI package** - `pip install testdata-ai`
-
----
-
-## 💡 Why testdata-ai?
-
-### Traditional Approach
+**Traditional approach (Faker):**
 ```python
-from faker import Faker
-fake = Faker()
-
 user = {
-    "name": "John Doe",           # Generic!
-    "email": "test123@example.com", # Obvious fake!
-    "age": 42                       # Random, no context
+    "name": "John Doe",              # Generic
+    "email": "test123@example.com",   # Obviously fake
+    "age": 42                         # Random, no context
 }
 ```
 
-**Problems:**
-- ❌ Everyone knows it's fake
-- ❌ No context awareness (e-commerce vs banking?)
-- ❌ No behavioral data (shopping patterns, preferences)
-- ❌ Manual effort for edge cases
-
-### testdata-ai Approach
+**testdata-ai approach:**
 ```python
-from testdata_ai import TestDataGenerator
-
 gen = TestDataGenerator()
 users = gen.generate("ecommerce_customer", count=100)
+# 100 unique, realistic, context-aware profiles in seconds
 ```
 
-**Result:** 100 unique, realistic, context-aware profiles in ~10 seconds!
-
-**Advantages:**
-- ✅ Realistic profiles (diverse cultures, realistic emails)
-- ✅ Context-aware (shopping behavior matches demographics)
-- ✅ Behavioral patterns (age → preferences, location → payment methods)
-- ✅ Massive time savings (AI generates in seconds)
-
----
-
-## 📖 Documentation
-
-- [Installation Guide](docs/installation.md) *(coming soon)*
-- [API Reference](docs/api-reference.md) *(coming soon)*
-- [Context Definitions](docs/contexts.md) *(coming soon)*
-
-For now, check:
-- [`examples/basic_usage.py`](examples/basic_usage.py) - Working example
-- [`.env.example`](.env.example) - Configuration template
+| | Faker | testdata-ai |
+|---|---|---|
+| Realistic emails | `test123@example.com` | `aisha.patel.2024@gmail.com` |
+| Cultural diversity | Limited | Names from many cultures |
+| Behavioral data | None | Shopping patterns, preferences |
+| Context awareness | No | Age matches behavior, location matches payment |
+| Edge cases | Manual | AI generates variety automatically |
 
 ---
 
-## 🛠️ Configuration
+## Available Contexts
 
-**Supported AI Providers:**
-- OpenAI (GPT-4)
-- Anthropic (Claude)
+| Context | Category | Description |
+|---|---|---|
+| `ecommerce_customer` | ecommerce | Customer profiles with shopping behavior, location, loyalty tier |
+| `banking_user` | finance | Bank customers with account types, balances, credit scores |
+| `saas_trial` | saas | Trial users with company info, roles, usage stats |
+| `healthcare_patient` | healthcare | Patient records with diagnoses, medications, allergies |
+| `education_student` | education | University student profiles with courses, GPA, enrollment |
+| `b2b_lead` | b2b | Sales lead profiles with company info, deal stages, scores |
+| `hr_employee` | hr | Employee records with departments, salary, performance |
+| `real_estate_listing` | real_estate | Property listings with address, price, features |
+| `iot_device` | iot | IoT device telemetry with sensor readings, status |
+| `social_media_profile` | social_media | User profiles with followers, engagement, hashtags |
+| `travel_booking` | travel | Booking records with routes, cabin class, pricing |
+| `restaurant_order` | food | Food delivery orders with items, totals, status |
+| `logistics_shipment` | logistics | Shipment tracking with routes, weight, checkpoints |
 
-**Setup:**
+Run `testdata-ai list-contexts` to see all contexts, or `testdata-ai show-context <name>` for details.
+
+---
+
+## Configuration
+
+Create a `.env` file (see [`.env.example`](.env.example)):
+
 ```bash
-# .env file
-AI_PROVIDER=openai  # or 'anthropic'
-OPENAI_API_KEY=sk-your-key-here
-# or
-ANTHROPIC_API_KEY=sk-ant-your-key-here
+AI_PROVIDER=openai                    # or 'anthropic'
+OPENAI_API_KEY=sk-proj-your-key-here
+OPENAI_MODEL=gpt-4o-mini             # cost-effective default
+OPENAI_MAX_TOKENS=4096               # increase for large counts
 ```
 
-See [`.env.example`](.env.example) for all options.
+Or override per-command:
+
+```bash
+testdata-ai generate --context banking_user --count 5 --provider anthropic
+testdata-ai generate --context saas_trial --count 30 --max-tokens 8192
+```
 
 ---
 
-## 📊 Development Roadmap
+## Use in Tests
 
-**Week 1** (Done):
-- [x] GitHub setup
-- [x] OpenAI/Anthropic API integration
-- [x] Core generator architecture
-- [x] E-commerce, Banking, SaaS contexts
-- [x] Data-driven prompt builder
+```python
+# conftest.py
+import pytest
+from testdata_ai import TestDataGenerator
 
-**Week 2-3:**
-- [ ] CLI interface (Click)
-- [ ] 10+ context templates
-- [ ] Output formatters (CSV, SQL)
-- [ ] Basic documentation
+@pytest.fixture(scope="session")
+def test_customers():
+    gen = TestDataGenerator()
+    return gen.generate("ecommerce_customer", count=10)
 
-**Week 4-6:**
+# test_checkout.py
+def test_checkout_flow(test_customers):
+    customer = test_customers[0]
+    assert customer["email"]
+    assert customer["age"] >= 18
+```
+
+---
+
+## Development Roadmap
+
+**Done:**
+- [x] OpenAI + Anthropic provider-agnostic architecture
+- [x] Core generator with data-driven prompts
+- [x] 13 built-in contexts across 13 categories
+- [x] Schema validation (100% success rate)
+- [x] CLI interface with Click (`generate`, `list-contexts`, `show-context`)
+- [x] JSON + CSV output formats
+- [x] Spinner with elapsed time
+- [x] Smart token estimation
+- [x] `python -m testdata_ai` support
+
+**Next:**
 - [ ] Pytest plugin
-- [ ] PyPI package
-- [ ] Comprehensive docs
-- [ ] v1.0 launch!
+- [ ] PyPI package (`pip install testdata-ai`)
+- [ ] Comprehensive documentation
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
-This is an active development project! Contributions welcome:
+Contributions welcome:
 
-- 🐛 **Found a bug?** Open an issue!
-- 💡 **Have an idea?** Start a discussion!
-- 🔧 **Want to code?** Fork and PR!
-
-*(CONTRIBUTING.md coming soon)*
+- Found a bug? Open an issue
+- Have an idea? Start a discussion
+- Want to code? Fork and PR
 
 ---
 
-## 📝 License
+## License
 
-MIT License - see [LICENSE](LICENSE)
-
----
-
-## 🌟 Star History
-
-⭐ **Star this repo** to follow progress and get notified when we launch v1.0!
-
-Building in public - watch this space! 🚀
+MIT License -- see [LICENSE](LICENSE)
 
 ---
 
-## 📬 Contact
-
-- **GitHub Issues:** Bug reports & feature requests
-- **Discussions:** Questions & ideas
-
----
-
-**Built with 💙 by [TestCraft AI](https://github.com/testcraft-ai)**
-
-*Building in public -- follow the progress!*
+**Built by [TestCraft AI](https://github.com/testcraft-ai)**

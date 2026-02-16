@@ -54,6 +54,8 @@ examples/generated_*
 test_output/
 output_data.*
 generated_data.*
+data.json
+data.csv
 
 # Logs
 *.log
