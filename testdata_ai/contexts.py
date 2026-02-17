@@ -10,6 +10,7 @@ Each context defines:
 
 __all__ = [
     "ContextSchema",
+    "ValidationError",
     "get_context_schema",
     "list_contexts",
     "validate_generated_data",
@@ -17,6 +18,21 @@ __all__ = [
 
 from dataclasses import dataclass
 from typing import Dict, List, Any, Optional
+
+
+class ValidationError(ValueError):
+    """Raised when generated records fail schema validation."""
+
+    def __init__(self, invalid_records: List[Dict[str, Any]]):
+        self.invalid_records = invalid_records
+        count = len(invalid_records)
+        details = "; ".join(
+            f"record {r['record_index']}: missing {r['missing_fields']}"
+            for r in invalid_records
+        )
+        super().__init__(
+            f"{count} record(s) failed validation: {details}"
+        )
 
 
 @dataclass
@@ -39,10 +55,14 @@ class ContextSchema:
 
     def validate_record(self, record: Dict[str, Any]) -> bool:
         """Check if a record has all required fields."""
+        if not isinstance(record, dict):
+            return False
         return all(f in record for f in self.fields)
 
     def missing_fields(self, record: Dict[str, Any]) -> List[str]:
         """Return list of required fields missing from a record."""
+        if not isinstance(record, dict):
+            return list(self.fields)
         return [f for f in self.fields if f not in record]
 
 

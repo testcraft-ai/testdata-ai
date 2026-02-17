@@ -72,20 +72,8 @@ def generate(
     context, count, output, fmt, provider, model, max_tokens, temperature, no_validate, quiet
 ):
     """Generate realistic test data using AI."""
-    # Override env vars so TestDataGenerator picks them up via get_provider_config()
-    if provider:
-        os.environ["AI_PROVIDER"] = provider
-    if model:
-        resolved = (provider or os.environ.get("AI_PROVIDER", "openai")).upper()
-        os.environ[f"{resolved}_MODEL"] = model
-    if max_tokens is not None:
-        resolved = (provider or os.environ.get("AI_PROVIDER", "openai")).upper()
-        os.environ[f"{resolved}_MAX_TOKENS"] = str(max_tokens)
-    if temperature is not None:
-        resolved = (provider or os.environ.get("AI_PROVIDER", "openai")).upper()
-        os.environ[f"{resolved}_TEMPERATURE"] = str(temperature)
+    _apply_overrides(provider, model, max_tokens, temperature)
 
-    # Validate context before estimating tokens
     try:
         schema = get_context_schema(context)
     except ValueError as e:
@@ -96,74 +84,92 @@ def generate(
     except (ValueError, ImportError) as e:
         raise click.ClickException(str(e))
 
-    # Estimate tokens needed: ~3 chars per token, 30% overhead for JSON formatting
+    _adjust_max_tokens(gen, schema, count, quiet)
+    records = _run_generation(gen, context, count, no_validate, quiet)
+    _report(records, count, gen.config.max_tokens, quiet)
+    _emit(records, fmt, output, quiet)
+
+
+def _apply_overrides(provider, model, max_tokens, temperature):
+    """Push CLI flags into env vars for TestDataGenerator to pick up."""
+    if provider:
+        os.environ["AI_PROVIDER"] = provider
+    resolved = (provider or os.environ.get("AI_PROVIDER", "openai")).upper()
+    if model:
+        os.environ[f"{resolved}_MODEL"] = model
+    if max_tokens is not None:
+        os.environ[f"{resolved}_MAX_TOKENS"] = str(max_tokens)
+    if temperature is not None:
+        os.environ[f"{resolved}_TEMPERATURE"] = str(temperature)
+
+
+def _adjust_max_tokens(gen, schema, count, quiet):
+    """Estimate required tokens and increase max_tokens if needed."""
     sample_tokens = len(json.dumps(schema.sample)) // 3
-    estimated_tokens = int(sample_tokens * count * 1.3)
-    current_max = gen.config.max_tokens
+    estimated = int(sample_tokens * count * 1.3)
+    current = gen.config.max_tokens
 
-    if estimated_tokens > current_max and not quiet:
-        click.echo(
-            click.style(
-                f"Estimated tokens needed: ~{estimated_tokens} "
-                f"(current max_tokens={current_max})",
-                fg="yellow",
-            ),
-            err=True,
-        )
-        choice = click.prompt(
-            "How would you like to proceed?",
-            type=click.Choice(["increase", "continue", "cancel"]),
-            default="increase",
-            show_choices=True,
-        )
-        if choice == "cancel":
-            raise click.Abort()
-        elif choice == "increase":
-            gen.provider.max_tokens = estimated_tokens
-            gen.config.max_tokens = estimated_tokens
-            click.echo(
-                click.style(f"max_tokens set to {estimated_tokens}", fg="green"),
-                err=True,
-            )
-        # "continue" -> proceed with current max_tokens as-is
-    elif estimated_tokens > current_max and quiet:
-        # In quiet mode, auto-increase without prompting
-        gen.provider.max_tokens = estimated_tokens
-        gen.config.max_tokens = estimated_tokens
+    if estimated <= current:
+        return
 
+    if quiet:
+        gen.provider.max_tokens = estimated
+        gen.config.max_tokens = estimated
+        return
+
+    click.echo(
+        click.style(
+            f"Estimated tokens needed: ~{estimated} (current max_tokens={current})",
+            fg="yellow",
+        ),
+        err=True,
+    )
+    choice = click.prompt(
+        "How would you like to proceed?",
+        type=click.Choice(["increase", "continue", "cancel"]),
+        default="increase",
+        show_choices=True,
+    )
+    if choice == "cancel":
+        raise click.Abort()
+    if choice == "increase":
+        gen.provider.max_tokens = estimated
+        gen.config.max_tokens = estimated
+        click.echo(click.style(f"max_tokens set to {estimated}", fg="green"), err=True)
+
+
+def _run_generation(gen, context, count, no_validate, quiet):
+    """Call the generator with a spinner and translate exceptions."""
     label = f"Generating {count} {context} records ({gen.config.provider}/{gen.config.model})"
-
     try:
         with _Spinner(label, silent=quiet):
-            records = gen.generate(context, count=count, validate=not no_validate)
+            return gen.generate(context, count=count, validate=not no_validate)
     except ValueError as e:
         raise click.ClickException(str(e))
     except RuntimeError as e:
         raise click.ClickException(f"API error: {e}")
 
-    if not quiet:
-        if len(records) < count:
-            click.echo(
-                click.style(
-                    f"Warning: Requested {count} records but received {len(records)}. "
-                    f"Try increasing with --max-tokens {current_max * 2}",
-                    fg="yellow",
-                ),
-                err=True,
-            )
-        else:
-            click.echo(
-                click.style(f"Generated {len(records)} records.", fg="green"),
-                err=True,
-            )
 
-    # Format output
-    if fmt == "csv":
-        text = _records_to_csv(records)
+def _report(records, count, current_max, quiet):
+    """Print generation summary to stderr."""
+    if quiet:
+        return
+    if len(records) < count:
+        click.echo(
+            click.style(
+                f"Warning: Requested {count} records but received {len(records)}. "
+                f"Try increasing with --max-tokens {current_max * 2}",
+                fg="yellow",
+            ),
+            err=True,
+        )
     else:
-        text = json.dumps(records, indent=2)
+        click.echo(click.style(f"Generated {len(records)} records.", fg="green"), err=True)
 
-    # Write output
+
+def _emit(records, fmt, output, quiet):
+    """Format records and write to file or stdout."""
+    text = _records_to_csv(records) if fmt == "csv" else json.dumps(records, indent=2)
     if output:
         with open(output, "w") as f:
             f.write(text)

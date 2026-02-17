@@ -16,6 +16,7 @@ from testdata_ai.contexts import (
     validate_generated_data,
     list_contexts,
     ContextSchema,
+    ValidationError,
 )
 from testdata_ai.config import get_provider_config, AIProviderConfig, DEFAULT_MODELS
 from testdata_ai.ai_providers import get_provider, AIProvider
@@ -109,6 +110,7 @@ class TestDataGenerator:
 
         Raises:
             ValueError: If context is unknown or AI response is not valid JSON
+            ValidationError: If generated records are missing required fields
         """
         if count < 1:
             raise ValueError(f"count must be >= 1, got {count}")
@@ -156,13 +158,7 @@ class TestDataGenerator:
         if validate:
             invalid = validate_generated_data(context, records)
             if invalid:
-                logger.warning(
-                    f"Validation: {len(invalid)}/{len(records)} records have missing fields"
-                )
-                for inv in invalid:
-                    logger.warning(
-                        f"  Record {inv['record_index']}: missing {inv['missing_fields']}"
-                    )
+                raise ValidationError(invalid)
 
         return records
 
@@ -175,19 +171,18 @@ class TestDataGenerator:
         return get_context_schema(context)
 
 
-_MARKDOWN_FENCE_RE = re.compile(r"^```[^\n]*\n(.*?)```\s*$", re.DOTALL)
+_MARKDOWN_FENCE_RE = re.compile(r"^(?:```[^\n]*\n)?(.*?)(?:```\s*)?$", re.DOTALL)
 
 
 def _strip_markdown_fences(text: str) -> str:
     """Remove markdown code fences that some AI providers wrap JSON in.
 
-    Handles all common fence variants (```json, ```JSON, ``` json, etc.).
+    Handles all common fence variants (```json, ```JSON, ``` json, etc.),
+    including missing closing fences.
     """
     text = text.strip()
-    match = _MARKDOWN_FENCE_RE.match(text)
-    if match:
-        return match.group(1).strip()
-    return text
+    # Regex always matches (all groups are optional), so .group(1) is safe.
+    return _MARKDOWN_FENCE_RE.match(text).group(1).strip()
 
 
 def generate(context: str, count: int = 10) -> List[Dict[str, Any]]:

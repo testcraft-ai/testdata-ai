@@ -54,3 +54,9 @@ packages = ["testdata_ai"]
 
 [tool.setuptools.package-data]
 testdata_ai = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::pytest.PytestCollectionWarning",
+]
