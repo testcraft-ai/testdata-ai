@@ -91,10 +91,11 @@ testdata-ai generate --context <name> [OPTIONS]
 |---|---|---|
 | `--context TEXT` | (required) | Context name (see [Available Contexts](#available-contexts)) |
 | `--count INTEGER` | `10` | Number of records to generate |
+| `--batch-size INTEGER` | `10` | Records per AI call. For `count > batch-size`, records are output progressively |
 | `-o, --output [json\|jsonl\|csv\|yaml]` | `json` | Output format. Write to file via shell redirection: `-o csv > data.csv` |
 | `--provider TEXT` | from env | AI provider override (`openai` / `anthropic` / `ollama`) |
 | `--model TEXT` | from env | Model name override |
-| `--max-tokens INTEGER` | from env | Max tokens for AI response |
+| `--max-tokens INTEGER` | from env | Max tokens per AI call (auto-adjusted to `batch-size` by default) |
 | `--temperature FLOAT` | from env | Sampling temperature `0.0–1.0` |
 | `--no-validate` | off | Skip schema validation |
 | `-q, --quiet` | off | Suppress status messages (data only to stdout) |
@@ -107,6 +108,9 @@ testdata-ai generate --context ecommerce_customer --count 10
 
 # 50 SaaS trial users saved as CSV
 testdata-ai generate --context saas_trial --count 50 -o csv > trials.csv
+
+# 100 records in batches of 20 — JSONL lines appear after each batch
+testdata-ai generate --context ecommerce_customer --count 100 --batch-size 20 -o jsonl
 
 # Use Anthropic instead of the default provider
 testdata-ai generate --context banking_user --count 5 --provider anthropic
@@ -124,13 +128,15 @@ testdata-ai generate --context iot_device --count 20 -q | jq '.[0]'
 python -m testdata_ai generate --context ecommerce_customer --count 5
 ```
 
-**Token auto-adjustment:** When `--max-tokens` is not set, the CLI estimates the required token budget and automatically increases it if needed, printing a yellow notice to stderr.
+**Batch generation / streaming:** Large counts are split into multiple AI calls of `--batch-size` records each. Progress is reported per batch in stderr. With `-o jsonl`, records are written to stdout as each batch completes — output starts immediately rather than waiting for all records. With `-o yaml`, each batch is appended as it arrives. With `-o json` or `-o csv`, all records are accumulated and written at the end.
+
+**Token auto-adjustment:** When `--max-tokens` is not set, the CLI estimates the required token budget **per batch** and automatically increases it if needed, printing a yellow notice to stderr.
 
 **CSV output:** Nested dicts are flattened with dot notation (e.g., `location.city`); lists are serialized as JSON strings.
 
-**JSONL output:** One JSON object per line — useful for streaming pipelines and tools like `jq`.
+**JSONL output:** One JSON object per line — records appear progressively as batches complete.
 
-**YAML output:** Records as a YAML list — requires `pyyaml` (included in core dependencies).
+**YAML output:** Records are appended batch-by-batch as generation progresses.
 
 ---
 
@@ -218,13 +224,14 @@ gen = DataGenerator(provider="openai", api_key="sk-proj-...")
 customers = gen.generate("ecommerce_customer", count=10)
 patients  = gen.generate("healthcare_patient", count=5)
 
+# Large counts — automatically split into batches of 20 AI calls each
+many = gen.generate("banking_user", count=100, batch_size=20)
+
 # Skip schema validation
 records = gen.generate("banking_user", count=20, validate=False)
 ```
 
-`DataGenerator.generate()` returns `List[Dict[str, Any]]` — a list of plain Python dicts.
-
-> **Note:** Generating more than 50 records at once may exceed model token limits. For large datasets consider splitting into multiple calls (e.g. `count=50` × N).
+`DataGenerator.generate()` returns `List[Dict[str, Any]]` — a list of plain Python dicts. For `count > batch_size`, it automatically splits the work into multiple AI calls and combines the results.
 
 **Raises:**
 - `ValueError` — unknown context, invalid JSON from AI, or bad arguments
@@ -240,9 +247,35 @@ For one-off use without instantiating the class:
 from testdata_ai import generate
 
 customers = generate("ecommerce_customer", count=20)
+
+# Large counts split automatically into 20-record batches
+many = generate("ecommerce_customer", count=100, batch_size=20)
 ```
 
 Configuration (provider, model, etc.) is read from environment variables. For explicit control use `DataGenerator` directly.
+
+---
+
+### `generate_batched()` — streaming / incremental output
+
+When you want to process or display records as they arrive rather than waiting for the full result:
+
+```python
+from testdata_ai import generate_batched
+
+# Process records in batches of 10 as each batch completes
+for batch in generate_batched("ecommerce_customer", count=50, batch_size=10):
+    print(f"Got {len(batch)} records")
+    save_to_db(batch)       # commit each batch immediately
+    send_to_pipeline(batch) # or stream to a downstream system
+
+# Or use DataGenerator directly for repeated use
+gen = DataGenerator(provider="anthropic")
+for batch in gen.generate_batched("banking_user", count=100, batch_size=20):
+    process(batch)
+```
+
+`generate_batched()` / `DataGenerator.generate_batched()` yield `List[Dict[str, Any]]` — one batch per iteration.
 
 ---
 
@@ -478,18 +511,18 @@ users = gen.generate("ecommerce_customer", count=50)
 - [x] Schema validation with missing-field reporting
 - [x] CLI (`generate`, `list-contexts`, `show-context`, `list-models`) with JSON, JSONL, CSV, and YAML output
 - [x] Auto token estimation and adjustment
-- [x] Spinner with elapsed time
+- [x] Spinner with elapsed time (animated on TTY, static on non-TTY)
 - [x] `python -m testdata_ai` support
 - [x] Pytest plugin: marker fixture, auto-context fixtures, seed/cache system
 - [x] Seed cache management CLI options (list, show, delete, clear)
 - [x] TEMP seed auto-cleanup after session
 - [x] pytest-xdist support with shared named seeds
 - [x] Rotating log file (`.testdata_ai.log`)
+- [x] Batch generation / streaming — `generate_batched()`, `--batch-size`, progressive JSONL/YAML output
 - [ ] PyPI package (`pip install testdata-ai`)
 
 **Next:**
 - [ ] Custom context definitions
-- [ ] Streaming / partial output for large counts
 
 ---
 

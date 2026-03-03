@@ -5,7 +5,7 @@ import io
 import json
 from unittest.mock import patch, MagicMock
 
-from testdata_ai.cli import cli, _flatten_dict, _records_to_csv, _adjust_max_tokens, _Spinner
+from testdata_ai.cli import cli, _flatten_dict, _records_to_csv, _adjust_max_tokens, _run_streaming, _Spinner
 from testdata_ai.contexts import CONTEXTS, ValidationError
 
 
@@ -58,14 +58,17 @@ def _patch_generator(records=None, *, side_effect=None):
     """Return a context manager that patches DataGenerator.
 
     Args:
-        records: If given, ``gen.generate()`` returns this list.
-        side_effect: If given, ``gen.generate()`` raises or calls this instead.
+        records: If given, ``gen.stream_generate()`` yields ``[records]`` (one batch).
+        side_effect: If given, both ``generate`` and ``stream_generate`` raise/call this.
     """
     mock_gen = MagicMock()
     if side_effect is not None:
         mock_gen.generate.side_effect = side_effect
+        mock_gen.generate_batched.side_effect = side_effect
     else:
-        mock_gen.generate.return_value = records
+        mock_gen.generate.return_value = records or []
+        # generate_batched yields a single batch containing all records
+        mock_gen.generate_batched.return_value = iter([records or []])
     mock_gen.config = MagicMock(
         provider="openai", model="test-model", max_tokens=4096
     )
@@ -148,8 +151,8 @@ class TestGenerateCmd:
                 ["generate", "--context", "banking_user", "--count", "1", "--no-validate", "-q"],
             )
         assert result.exit_code == 0
-        mock_cls.return_value.generate.assert_called_once_with(
-            "banking_user", count=1, validate=False
+        mock_cls.return_value.generate_batched.assert_called_once_with(
+            "banking_user", 1, 10, validate=False
         )
 
     def test_generate_quiet_suppresses_status(self, runner):
@@ -198,7 +201,7 @@ class TestGenerateCmd:
         assert "Warning: Requested 5 records but received 1" in result.output
 
     def test_generate_invalid_json_from_ai(self, runner):
-        """ValueError from gen.generate (e.g. invalid JSON) is caught by _run_generation."""
+        """ValueError from gen.generate (e.g. invalid JSON) is caught by _run_streaming."""
         with _patch_generator(side_effect=ValueError("AI response is not valid JSON: oops")):
             result = runner.invoke(
                 cli,
@@ -219,7 +222,7 @@ class TestGenerateCmd:
         assert "Generated 1 records" in result.output
 
     def test_generate_validation_error_from_generator(self, runner):
-        """ValidationError (subclass of ValueError) is caught by _run_generation."""
+        """ValidationError (subclass of ValueError) is caught by _run_streaming."""
         invalid = [{"record_index": 0, "missing_fields": ["email", "balance"]}]
         with _patch_generator(side_effect=ValidationError(invalid)):
             result = runner.invoke(
@@ -379,6 +382,86 @@ class TestAdjustMaxTokens:
         gen.set_max_tokens.assert_called_once()
         assert gen.set_max_tokens.call_args[0][0] > 100
         mock_echo.assert_called_once()
+
+
+class TestStreaming:
+
+    def test_jsonl_emits_one_line_per_record(self, runner):
+        sample = CONTEXTS["banking_user"].sample
+        with _patch_generator([sample, sample]):
+            result = runner.invoke(
+                cli,
+                ["generate", "--context", "banking_user", "--count", "2",
+                 "--batch-size", "10", "-o", "jsonl", "-q"],
+            )
+        assert result.exit_code == 0
+        lines = [l for l in result.output.strip().splitlines() if l]
+        assert len(lines) == 2
+        for line in lines:
+            assert isinstance(json.loads(line), dict)
+
+    def test_jsonl_multi_batch_emits_all_records(self, runner):
+        sample = CONTEXTS["banking_user"].sample
+        with _patch_generator([sample, sample]) as mock_cls:
+            # two batches of 2 records each
+            mock_cls.return_value.generate_batched.return_value = iter(
+                [[sample, sample], [sample, sample]]
+            )
+            result = runner.invoke(
+                cli,
+                ["generate", "--context", "banking_user", "--count", "4",
+                 "--batch-size", "2", "-o", "jsonl", "-q"],
+            )
+        assert result.exit_code == 0
+        lines = [l for l in result.output.strip().splitlines() if l]
+        assert len(lines) == 4
+
+    def test_json_format_accumulates_and_outputs_at_end(self, runner):
+        sample = CONTEXTS["banking_user"].sample
+        with _patch_generator([sample, sample]):
+            result = runner.invoke(
+                cli,
+                ["generate", "--context", "banking_user", "--count", "2",
+                 "--batch-size", "10", "-o", "json", "-q"],
+            )
+        assert result.exit_code == 0
+        records = json.loads(result.output)
+        assert isinstance(records, list)
+        assert len(records) == 2
+
+    def test_progress_shown_for_multiple_batches(self, runner):
+        sample = CONTEXTS["banking_user"].sample
+        with _patch_generator([sample]) as mock_cls:
+            mock_cls.return_value.generate_batched.return_value = iter(
+                [[sample] * 10, [sample] * 5]
+            )
+            result = runner.invoke(
+                cli,
+                ["generate", "--context", "banking_user", "--count", "15",
+                 "--batch-size", "10", "-o", "json"],
+            )
+        assert result.exit_code == 0
+        assert "Batch 1/2" in result.output
+
+    def test_run_streaming_returns_all_records(self):
+        sample = CONTEXTS["banking_user"].sample
+        mock_gen = MagicMock()
+        mock_gen.generate_batched.return_value = iter([[sample, sample], [sample]])
+        mock_gen.config = MagicMock(provider="openai", model="test-model")
+
+        records = _run_streaming(mock_gen, "banking_user", 3, 2, "json", False, True)
+        assert len(records) == 3
+
+    def test_batch_size_default_is_10(self, runner):
+        sample = CONTEXTS["banking_user"].sample
+        with _patch_generator([sample]) as mock_cls:
+            runner.invoke(
+                cli,
+                ["generate", "--context", "banking_user", "--count", "1", "-q"],
+            )
+        mock_cls.return_value.generate_batched.assert_called_once_with(
+            "banking_user", 1, 10, validate=True
+        )
 
 
 class TestSpinner:

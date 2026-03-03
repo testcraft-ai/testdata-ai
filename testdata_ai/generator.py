@@ -3,10 +3,10 @@ Core test data generator - provider agnostic.
 Supports OpenAI, Anthropic, and other AI providers.
 """
 
-__all__ = ["DataGenerator", "generate"]
+__all__ = ["DataGenerator", "generate", "generate_batched"]
 
 import json
-from typing import Dict, List, Any, Optional
+from typing import Dict, Iterator, List, Any, Optional
 import logging
 
 from testdata_ai.prompts import get_prompt
@@ -117,11 +117,6 @@ class DataGenerator:
         """
         if count < 1:
             raise ValueError(f"count must be >= 1, got {count}")
-        if count > 50:
-            logger.warning(
-                f"count={count} may exceed token limits. "
-                f"Consider generating in smaller batches."
-            )
 
         logger.info(f"Generating {count} records for context: {context}")
 
@@ -169,6 +164,46 @@ class DataGenerator:
 
         return records
 
+    def generate_batched(
+        self,
+        context: str,
+        count: int,
+        batch_size: int = 10,
+        validate: bool = True,
+    ) -> Iterator[List[Dict[str, Any]]]:
+        """Generate records in batches, yielding each completed batch.
+
+        Splits large counts into multiple AI calls of ``batch_size`` records
+        each.  Useful for large counts where incremental output is desired.
+
+        Args:
+            context: Context name (e.g. "ecommerce_customer")
+            count: Total number of records to generate
+            batch_size: Records per AI call (default 10)
+            validate: Whether to validate each batch against schema
+
+        Yields:
+            List[Dict] for each completed batch
+        """
+        if count < 1:
+            raise ValueError(f"count must be >= 1, got {count}")
+        if batch_size < 1:
+            raise ValueError(f"batch_size must be >= 1, got {batch_size}")
+        remaining = count
+        total_yielded = 0
+        while remaining > 0:
+            current_batch = min(batch_size, remaining)
+            batch = self.generate(context, current_batch, validate=validate)
+            if not batch:
+                break
+            yield batch
+            total_yielded += len(batch)
+            remaining -= current_batch
+        if total_yielded < count:
+            logger.warning(
+                f"Requested {count} total records but generated {total_yielded}"
+            )
+
 
 def _strip_markdown_fences(text: str) -> str:
     """Remove markdown code fences that some AI providers wrap JSON in."""
@@ -183,15 +218,39 @@ def _strip_markdown_fences(text: str) -> str:
     return text.strip()
 
 
-def generate(context: str, count: int = 10) -> List[Dict[str, Any]]:
+def generate_batched(
+    context: str, count: int = 10, batch_size: int = 10, validate: bool = True
+) -> Iterator[List[Dict[str, Any]]]:
+    """Convenience function for batched generation.
+
+    Yields one completed batch at a time. Creates a new DataGenerator each
+    call. For repeated use, instantiate DataGenerator directly.
+
+    Example:
+        >>> from testdata_ai.generator import generate_batched
+        >>> for batch in generate_batched('ecommerce_customer', 50, batch_size=10):
+        ...     process(batch)
+    """
+    gen = DataGenerator()
+    yield from gen.generate_batched(context, count, batch_size, validate=validate)
+
+
+def generate(
+    context: str, count: int = 10, batch_size: int = 10, validate: bool = True
+) -> List[Dict[str, Any]]:
     """Convenience function for one-off generation.
 
-    Creates a new DataGenerator each call. For repeated use,
-    instantiate DataGenerator directly.
+    For count > batch_size, automatically splits into multiple AI calls
+    and returns the combined result.  Creates a new DataGenerator each call;
+    for repeated use, instantiate DataGenerator directly.
 
     Example:
         >>> from testdata_ai import generate
         >>> customers = generate('ecommerce_customer', 20)
+        >>> many = generate('ecommerce_customer', 100, batch_size=20)
     """
     gen = DataGenerator()
-    return gen.generate(context, count)
+    results: List[Dict[str, Any]] = []
+    for batch in gen.generate_batched(context, count, batch_size, validate=validate):
+        results.extend(batch)
+    return results

@@ -392,7 +392,7 @@ class TestLazyGenerator:
     def test_generate_initializes_once_and_reuses_generator(self):
         lazy = _LazyGenerator()
         real_gen = MagicMock()
-        real_gen.generate.return_value = [{"id": 1}]
+        real_gen.generate_batched.return_value = [[{"id": 1}]]
         with patch.object(plugin_mod, "DataGenerator", return_value=real_gen) as mock_gen_cls:
             first = lazy.generate("ecommerce_customer", 1)
             second = lazy.generate("ecommerce_customer", 1)
@@ -400,7 +400,7 @@ class TestLazyGenerator:
         assert first == [{"id": 1}]
         assert second == [{"id": 1}]
         mock_gen_cls.assert_called_once()
-        assert real_gen.generate.call_count == 2
+        assert real_gen.generate_batched.call_count == 2
 
     def test_generate_raises_plugin_config_error_with_helpful_message(self):
         lazy = _LazyGenerator()

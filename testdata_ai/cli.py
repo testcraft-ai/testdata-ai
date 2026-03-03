@@ -1,9 +1,13 @@
 """CLI interface for testdata-ai."""
 
+import contextlib
 import csv
 import io
+import itertools
 import json
+import math
 import sys
+import threading
 import time
 
 import yaml
@@ -60,10 +64,17 @@ def cli():
     "--no-validate", is_flag=True, help="Skip schema validation of generated data."
 )
 @click.option(
+    "--batch-size",
+    default=10,
+    show_default=True,
+    type=int,
+    help="Records per AI call. For count > batch-size, records stream progressively.",
+)
+@click.option(
     "-q", "--quiet", is_flag=True, help="Suppress status messages (only output data)."
 )
 def generate(
-    context, count, fmt, provider, model, max_tokens, temperature, no_validate, quiet
+    context, count, fmt, provider, model, max_tokens, temperature, no_validate, batch_size, quiet
 ):
     """Generate realistic test data using AI."""
     try:
@@ -81,11 +92,10 @@ def generate(
     except (ValueError, ImportError) as e:
         raise click.ClickException(str(e))
 
-    _adjust_max_tokens(gen, schema, count, quiet, user_set=max_tokens is not None)
+    _adjust_max_tokens(gen, schema, min(count, batch_size), quiet, user_set=max_tokens is not None)
 
-    records = _run_generation(gen, context, count, no_validate, quiet)
+    records = _run_streaming(gen, context, count, batch_size, fmt, no_validate, quiet)
     _report(records, count, gen.provider.max_tokens, quiet)
-    _emit(records, fmt)
 
 
 def _adjust_max_tokens(gen, context_schema, count, quiet, user_set):
@@ -111,16 +121,42 @@ def _adjust_max_tokens(gen, context_schema, count, quiet, user_set):
         )
 
 
-def _run_generation(gen, context, count, no_validate, quiet):
-    """Call the generator with a spinner and translate exceptions."""
+def _run_streaming(gen, context, count, batch_size, fmt, no_validate, quiet):
+    """Generate in batches, streaming records to stdout as each batch completes."""
+    total_batches = math.ceil(count / batch_size)
     label = f"Generating {count} {context} records ({gen.config.provider}/{gen.config.model})"
+    all_records: List[Dict[str, Any]] = []
+    done = 0
+    jsonl_pretty = fmt == "jsonl" and sys.stdout.isatty()
     try:
-        with _Spinner(label, silent=quiet):
-            return gen.generate(context, count=count, validate=not no_validate)
+        with _Spinner(label, silent=quiet) as spinner:
+            for i, batch in enumerate(
+                gen.generate_batched(context, count, batch_size, validate=not no_validate), 1
+            ):
+                done += len(batch)
+                all_records.extend(batch)
+                with spinner.hidden():
+                    if fmt == "jsonl":
+                        for record in batch:
+                            if jsonl_pretty:
+                                click.echo(json.dumps(record, indent=2))
+                                click.echo("")
+                            else:
+                                click.echo(json.dumps(record))
+                    elif fmt == "yaml":
+                        click.echo(yaml.dump(batch, allow_unicode=True, sort_keys=False), nl=False)
+                if total_batches > 1:
+                    spinner.update(f"Batch {i}/{total_batches} done ({done}/{count} records)")
+            with spinner.hidden():
+                if fmt == "json":
+                    click.echo(json.dumps(all_records, indent=2))
+                elif fmt == "csv":
+                    click.echo(_records_to_csv(all_records), nl=False)
     except ValueError as e:
         raise click.ClickException(str(e))
     except RuntimeError as e:
         raise click.ClickException(f"API error: {e}")
+    return all_records
 
 
 def _report(records, count, current_max, quiet):
@@ -139,18 +175,6 @@ def _report(records, count, current_max, quiet):
     else:
         click.echo(click.style(f"Generated {len(records)} records.", fg="green"), err=True)
 
-
-def _emit(records, fmt):
-    """Format records and write to stdout."""
-    if fmt == "csv":
-        text = _records_to_csv(records)
-    elif fmt == "jsonl":
-        text = "\n".join(json.dumps(r) for r in records)
-    elif fmt == "yaml":
-        text = yaml.dump(records, allow_unicode=True, sort_keys=False)
-    else:
-        text = json.dumps(records, indent=2)
-    click.echo(text)
 
 
 @cli.command("list-contexts")
@@ -230,38 +254,77 @@ def list_models_cmd(provider):
 
 
 class _Spinner:
-    """Simple context manager that prints start/done messages to stderr."""
+    """Animated spinner context manager (stderr). Falls back to static text on non-TTY."""
+
+    FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+    INTERVAL = 0.08
 
     def __init__(self, message: str, silent: bool = False):
         self._message = message
         self._silent = silent
         self._start: Optional[float] = None
+        self._stop = threading.Event()
+        self._lock = threading.Lock()
+        self._thread: Optional[threading.Thread] = None
+        self._is_tty = sys.stderr.isatty()
 
     def __enter__(self):
         if not self._silent:
-            sys.stderr.write(f"  {self._message}...\n")
-            sys.stderr.flush()
             self._start = time.monotonic()
+            if self._is_tty:
+                self._thread = threading.Thread(target=self._spin, daemon=True)
+                self._thread.start()
+            else:
+                sys.stderr.write(f"  {self._message}...\n")
+                sys.stderr.flush()
         return self
 
-    def __exit__(self, *args):
-        if not self._silent and self._start is not None:
-            elapsed = time.monotonic() - self._start
-            sys.stderr.write(f"  Done ({elapsed:.1f}s)\n")
+    def _spin(self) -> None:
+        for frame in itertools.cycle(self.FRAMES):
+            if self._stop.is_set():
+                break
+            with self._lock:
+                if not self._stop.is_set():
+                    sys.stderr.write(f"\r\033[K  {frame} {self._message}")
+                    sys.stderr.flush()
+            self._stop.wait(self.INTERVAL)
+
+    def update(self, message: str) -> None:
+        """Update the status message (no-op when silent)."""
+        if self._silent:
+            return
+        with self._lock:
+            self._message = message
+        if not self._is_tty:
+            sys.stderr.write(f"  {message}\n")
             sys.stderr.flush()
 
+    @contextlib.contextmanager
+    def hidden(self):
+        """Temporarily clear the spinner line so stdout records are not overwritten."""
+        if self._silent or not self._is_tty or self._thread is None:
+            yield
+            return
+        self._lock.acquire()
+        try:
+            sys.stderr.write("\r\033[K")
+            sys.stderr.flush()
+            yield
+        finally:
+            self._lock.release()
 
-def _records_to_csv(records: List[Dict[str, Any]]) -> str:
-    """Convert records to CSV string, flattening nested dicts."""
-    if not records:
-        return ""
-    flat = [_flatten_dict(r) for r in records]
-    fieldnames = list(dict.fromkeys(key for row in flat for key in row))
-    buf = io.StringIO()
-    writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
-    writer.writeheader()
-    writer.writerows(flat)
-    return buf.getvalue()
+    def __exit__(self, *args):
+        if self._silent or self._start is None:
+            return
+        elapsed = time.monotonic() - self._start
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1)
+            sys.stderr.write(f"\r\033[K  Done ({elapsed:.1f}s)\n")
+        else:
+            sys.stderr.write(f"  Done ({elapsed:.1f}s)\n")
+        sys.stderr.flush()
+
 
 
 def _flatten_dict(
@@ -278,3 +341,16 @@ def _flatten_dict(
         else:
             result[new_key] = v
     return result
+
+
+def _records_to_csv(records: List[Dict[str, Any]]) -> str:
+    """Convert records to CSV text (with header). Nested dicts are dot-flattened."""
+    if not records:
+        return ""
+    flat = [_flatten_dict(r) for r in records]
+    fieldnames = list(dict.fromkeys(k for row in flat for k in row))
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore", restval="")
+    writer.writeheader()
+    writer.writerows(flat)
+    return buf.getvalue()

@@ -33,6 +33,8 @@ class _PluginConfigError(RuntimeError):
 class _LazyGenerator:
     """Lazily instantiate DataGenerator on first use."""
 
+    _BATCH_SIZE = 10
+
     def __init__(self):
         self._generator = None
 
@@ -46,7 +48,10 @@ class _LazyGenerator:
                     "Set provider env vars (for example OPENAI_API_KEY) and install "
                     "provider dependencies (for example pip install testdata-ai[all])."
                 ) from exc
-        return self._generator.generate(context=context, count=count)
+        results = []
+        for batch in self._generator.generate_batched(context, count, self._BATCH_SIZE):
+            results.extend(batch)
+        return results
 
 
 def _setup_logging():
