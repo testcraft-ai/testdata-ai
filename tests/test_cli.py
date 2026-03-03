@@ -3,13 +3,9 @@
 import csv
 import io
 import json
-import os
 from unittest.mock import patch, MagicMock
 
-import click
-import pytest
-
-from testdata_ai.cli import cli, _flatten_dict, _records_to_csv, _apply_overrides, _adjust_max_tokens, _Spinner
+from testdata_ai.cli import cli, _flatten_dict, _records_to_csv, _adjust_max_tokens, _Spinner
 from testdata_ai.contexts import CONTEXTS, ValidationError
 
 
@@ -59,7 +55,7 @@ class TestShowContextCmd:
 
 
 def _patch_generator(records=None, *, side_effect=None):
-    """Return a context manager that patches TestDataGenerator.
+    """Return a context manager that patches DataGenerator.
 
     Args:
         records: If given, ``gen.generate()`` returns this list.
@@ -76,7 +72,7 @@ def _patch_generator(records=None, *, side_effect=None):
     mock_gen.provider = MagicMock(max_tokens=4096)
 
     return patch(
-        "testdata_ai.cli.TestDataGenerator", return_value=mock_gen
+        "testdata_ai.cli.DataGenerator", return_value=mock_gen
     )
 
 
@@ -98,24 +94,37 @@ class TestGenerateCmd:
         with _patch_generator([sample]):
             result = runner.invoke(
                 cli,
-                ["generate", "--context", "banking_user", "--count", "1", "-f", "csv", "-q"],
+                ["generate", "--context", "banking_user", "--count", "1", "-o", "csv", "-q"],
             )
         assert result.exit_code == 0
         reader = csv.reader(io.StringIO(result.output.strip()))
         rows = list(reader)
         assert len(rows) == 2  # header + 1 data row
 
-    def test_generate_writes_to_file(self, runner, tmp_path):
-        sample = CONTEXTS["saas_trial"].sample
-        outfile = str(tmp_path / "out.json")
+    def test_generate_jsonl_to_stdout(self, runner):
+        sample = CONTEXTS["banking_user"].sample
+        with _patch_generator([sample, sample]):
+            result = runner.invoke(
+                cli,
+                ["generate", "--context", "banking_user", "--count", "2", "-o", "jsonl", "-q"],
+            )
+        assert result.exit_code == 0
+        lines = result.output.strip().splitlines()
+        assert len(lines) == 2
+        for line in lines:
+            assert isinstance(json.loads(line), dict)
+
+    def test_generate_yaml_to_stdout(self, runner):
+        import yaml
+        sample = CONTEXTS["banking_user"].sample
         with _patch_generator([sample]):
             result = runner.invoke(
                 cli,
-                ["generate", "--context", "saas_trial", "--count", "1", "-o", outfile, "-q"],
+                ["generate", "--context", "banking_user", "--count", "1", "-o", "yaml", "-q"],
             )
         assert result.exit_code == 0
-        with open(outfile) as f:
-            data = json.load(f)
+        data = yaml.safe_load(result.output)
+        assert isinstance(data, list)
         assert len(data) == 1
 
     def test_generate_unknown_context_errors(self, runner):
@@ -166,7 +175,7 @@ class TestGenerateCmd:
 
     def test_generate_import_error_missing_provider(self, runner):
         with patch(
-            "testdata_ai.cli.TestDataGenerator",
+            "testdata_ai.cli.DataGenerator",
             side_effect=ImportError("openai package is required"),
         ):
             result = runner.invoke(
@@ -175,23 +184,6 @@ class TestGenerateCmd:
             )
         assert result.exit_code != 0
         assert "openai package is required" in result.output
-
-    def test_generate_csv_to_file(self, runner, tmp_path):
-        sample = CONTEXTS["banking_user"].sample
-        outfile = str(tmp_path / "out.csv")
-        with _patch_generator([sample]):
-            result = runner.invoke(
-                cli,
-                [
-                    "generate", "--context", "banking_user", "--count", "1",
-                    "-f", "csv", "-o", outfile, "-q",
-                ],
-            )
-        assert result.exit_code == 0
-        with open(outfile) as f:
-            reader = csv.reader(f)
-            rows = list(reader)
-        assert len(rows) == 2  # header + 1 data row
 
     def test_generate_fewer_records_warns(self, runner):
         """Non-quiet mode: warning when fewer records returned than requested."""
@@ -226,18 +218,6 @@ class TestGenerateCmd:
         assert result.exit_code == 0
         assert "Generated 1 records" in result.output
 
-    def test_generate_non_quiet_file_shows_saved(self, runner, tmp_path):
-        sample = CONTEXTS["banking_user"].sample
-        outfile = str(tmp_path / "out.json")
-        with _patch_generator([sample]):
-            result = runner.invoke(
-                cli,
-                ["generate", "--context", "banking_user", "--count", "1", "-o", outfile],
-                catch_exceptions=False,
-            )
-        assert result.exit_code == 0
-        assert "Saved to" in result.output
-
     def test_generate_validation_error_from_generator(self, runner):
         """ValidationError (subclass of ValueError) is caught by _run_generation."""
         invalid = [{"record_index": 0, "missing_fields": ["email", "balance"]}]
@@ -249,10 +229,8 @@ class TestGenerateCmd:
         assert result.exit_code != 0
         assert "failed validation" in result.output
 
-    def test_generate_with_provider_and_model_flags(self, runner, monkeypatch):
-        """CLI --provider and --model flags are propagated to env vars."""
-        monkeypatch.delenv("AI_PROVIDER", raising=False)
-        monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
+    def test_generate_with_provider_and_model_flags(self, runner):
+        """CLI --provider and --model flags are passed directly to DataGenerator."""
         sample = CONTEXTS["banking_user"].sample
         with _patch_generator([sample]):
             result = runner.invoke(
@@ -265,9 +243,8 @@ class TestGenerateCmd:
             )
         assert result.exit_code == 0
 
-    def test_generate_with_max_tokens_flag(self, runner, monkeypatch):
-        """CLI --max-tokens flag is propagated to env vars."""
-        monkeypatch.delenv("OPENAI_MAX_TOKENS", raising=False)
+    def test_generate_with_max_tokens_flag(self, runner):
+        """CLI --max-tokens flag is passed directly to DataGenerator."""
         sample = CONTEXTS["banking_user"].sample
         with _patch_generator([sample]):
             result = runner.invoke(
@@ -279,9 +256,8 @@ class TestGenerateCmd:
             )
         assert result.exit_code == 0
 
-    def test_generate_with_temperature_flag(self, runner, monkeypatch):
-        """CLI --temperature flag is propagated to env vars."""
-        monkeypatch.delenv("OPENAI_TEMPERATURE", raising=False)
+    def test_generate_with_temperature_flag(self, runner):
+        """CLI --temperature flag is passed directly to DataGenerator."""
         sample = CONTEXTS["banking_user"].sample
         with _patch_generator([sample]):
             result = runner.invoke(
@@ -377,59 +353,6 @@ class TestRecordsToCsv:
 
 
 
-@pytest.mark.usefixtures("clean_ai_env_fixture")
-class TestApplyOverrides:
-
-    def _run(self, provider, model, max_tokens, temperature, monkeypatch):
-        """
-        Apply overrides for the provider/model and ensure any newly added 
-        environment variables are registered for cleanup.
-        """
-        # Snapshot existing environment variable keys
-        existing_env_keys = set(os.environ)
-
-        # Apply overrides (may add new environment variables)
-        _apply_overrides(provider, model, max_tokens, temperature)
-
-        # Find new environment variables and register them with monkeypatch
-        new_env_keys = set(os.environ) - existing_env_keys
-        for key in new_env_keys:
-            monkeypatch.setenv(key, os.environ[key])
-
-
-    def test_sets_provider_env(self, monkeypatch):
-        self._run("anthropic", None, None, None, monkeypatch)
-        assert os.environ["AI_PROVIDER"] == "anthropic"
-
-    def test_sets_model_for_default_provider(self, monkeypatch):
-        self._run(None, "gpt-4o", None, None, monkeypatch)
-        assert os.environ["OPENAI_MODEL"] == "gpt-4o"
-
-    def test_sets_model_for_explicit_provider(self, monkeypatch):
-        self._run("anthropic", "claude-sonnet", None, None, monkeypatch)
-        assert os.environ["ANTHROPIC_MODEL"] == "claude-sonnet"
-
-    def test_sets_max_tokens(self, monkeypatch):
-        self._run(None, None, 8192, None, monkeypatch)
-        assert os.environ["OPENAI_MAX_TOKENS"] == "8192"
-
-    def test_sets_temperature(self, monkeypatch):
-        self._run(None, None, None, 0.5, monkeypatch)
-        assert os.environ["OPENAI_TEMPERATURE"] == "0.5"
-
-    def test_skips_none_values(self, monkeypatch):
-        self._run(None, None, None, None, monkeypatch)
-        assert "AI_PROVIDER" not in os.environ
-        assert "OPENAI_MODEL" not in os.environ
-        assert "OPENAI_MAX_TOKENS" not in os.environ
-        assert "OPENAI_TEMPERATURE" not in os.environ
-
-    def test_resolves_provider_from_existing_env(self, monkeypatch):
-        """When provider arg is None, resolves prefix from AI_PROVIDER env var."""
-        monkeypatch.setenv("AI_PROVIDER", "anthropic")
-        self._run(None, "claude-sonnet", None, None, monkeypatch)
-        assert os.environ["ANTHROPIC_MODEL"] == "claude-sonnet"
-
 
 class TestAdjustMaxTokens:
 
@@ -437,65 +360,42 @@ class TestAdjustMaxTokens:
         gen = mock_generator
         gen.config.max_tokens = 4096
         gen.provider.max_tokens = 4096
-        _adjust_max_tokens(gen, mock_context_schema, count=1, quiet=True)
+        _adjust_max_tokens(gen, mock_context_schema, count=1, quiet=True, user_set=False)
         assert gen.config.max_tokens == 4096
 
     def test_quiet_mode_auto_increases(self, mock_generator, mock_context_schema):
         gen = mock_generator
         gen.config.max_tokens = 100
+        _adjust_max_tokens(gen, mock_context_schema, count=500, quiet=True, user_set=False)
+        gen.set_max_tokens.assert_called_once()
+        called_value = gen.set_max_tokens.call_args[0][0]
+        assert called_value > 100
+
+    def test_non_quiet_auto_increases_and_echoes(self, mock_generator, mock_context_schema):
+        gen = mock_generator
         gen.provider.max_tokens = 100
-        _adjust_max_tokens(gen, mock_context_schema, count=500, quiet=True)
-        assert gen.config.max_tokens > 100
-        assert gen.provider.max_tokens == gen.config.max_tokens
-
-    def test_interactive_increase(self, mock_generator, mock_context_schema):
-        with patch("testdata_ai.cli.click.prompt", return_value="increase"), \
-             patch("testdata_ai.cli.click.echo"):
-            gen = mock_generator
-            gen.config.max_tokens = 100
-            gen.provider.max_tokens = 100
-            _adjust_max_tokens(gen, mock_context_schema, count=500, quiet=False)
-            assert gen.config.max_tokens > 100
-            assert gen.provider.max_tokens == gen.config.max_tokens
-
-    def test_interactive_continue_keeps_original(self, mock_generator, mock_context_schema):
-        with patch("testdata_ai.cli.click.prompt", return_value="continue"), \
-             patch("testdata_ai.cli.click.echo"):
-            gen = mock_generator
-            gen.config.max_tokens = 100
-            gen.provider.max_tokens = 100
-            _adjust_max_tokens(gen, mock_context_schema, count=500, quiet=False)
-            assert gen.config.max_tokens == 100
-
-    def test_interactive_cancel_aborts(self, mock_generator, mock_context_schema):
-        with patch("testdata_ai.cli.click.prompt", return_value="cancel"), \
-             patch("testdata_ai.cli.click.echo"):
-            gen = mock_generator
-            gen.config.max_tokens = 100
-            gen.provider.max_tokens = 100
-            with pytest.raises(click.Abort):
-                _adjust_max_tokens(gen, mock_context_schema, count=500, quiet=False)
+        with patch("testdata_ai.cli.click.echo") as mock_echo:
+            _adjust_max_tokens(gen, mock_context_schema, count=500, quiet=False, user_set=False)
+        gen.set_max_tokens.assert_called_once()
+        assert gen.set_max_tokens.call_args[0][0] > 100
+        mock_echo.assert_called_once()
 
 
 class TestSpinner:
 
-    def test_silent_mode_no_thread(self):
-        spinner = _Spinner("testing", silent=True)
-        with spinner:
-            assert spinner._thread is None
+    def test_silent_mode_no_output(self, capsys):
+        with _Spinner("testing", silent=True):
+            pass
+        assert capsys.readouterr().err == ""
 
-    def test_non_silent_starts_and_stops_thread(self):
-        spinner = _Spinner("testing", silent=False)
-        with spinner:
-            assert spinner._thread is not None
-            assert spinner._thread.is_alive()
-        assert not spinner._thread.is_alive()
+    def test_non_silent_writes_start_and_done(self, capsys):
+        with _Spinner("working", silent=False):
+            pass
+        err = capsys.readouterr().err
+        assert "working" in err
+        assert "Done" in err
 
-    def test_spin_writes_to_stderr(self, capsys):
-        """Exercise the _spin loop body: wait for at least one frame to render."""
-        import time
-        spinner = _Spinner("working", silent=False)
-        with spinner:
-            time.sleep(0.25)  # let at least one animation frame render
-        captured = capsys.readouterr()
-        assert "working" in captured.err
+    def test_elapsed_time_shown(self, capsys):
+        with _Spinner("task", silent=False):
+            pass
+        assert "s)" in capsys.readouterr().err

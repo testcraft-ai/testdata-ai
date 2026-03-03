@@ -34,11 +34,15 @@ class AIProviderConfig:
             raise ValueError(f"max_tokens must be >= 1, got {self.max_tokens}")
 
 
-def get_provider_config(provider: Optional[str] = None) -> AIProviderConfig:
+def get_provider_config(
+    provider: Optional[str] = None,
+    api_key: Optional[str] = None,
+) -> AIProviderConfig:
     """Get configuration for specified AI provider from environment.
 
     Args:
         provider: Provider name ('openai', 'anthropic', None=default from env)
+        api_key: Explicit API key; if None, reads from environment variable
 
     Returns:
         AIProviderConfig with settings
@@ -56,8 +60,8 @@ def get_provider_config(provider: Optional[str] = None) -> AIProviderConfig:
 
     prefix = provider.upper()
 
-    api_key = os.getenv(f"{prefix}_API_KEY", "").strip()
-    if not api_key:
+    resolved_key = api_key or os.getenv(f"{prefix}_API_KEY", "").strip()
+    if not resolved_key:
         raise ValueError(
             f"{prefix} API key not found! "
             f"Set {prefix}_API_KEY in .env file or environment."
@@ -65,7 +69,7 @@ def get_provider_config(provider: Optional[str] = None) -> AIProviderConfig:
 
     return AIProviderConfig(
         provider=provider,
-        api_key=api_key,
+        api_key=resolved_key,
         model=os.getenv(f"{prefix}_MODEL", DEFAULT_MODELS[provider]),
         temperature=float(os.getenv(f"{prefix}_TEMPERATURE", "0.7")),
         max_tokens=int(os.getenv(f"{prefix}_MAX_TOKENS", "4096")),

@@ -5,6 +5,7 @@ Supports multiple AI providers (OpenAI, Anthropic, etc.)
 
 from abc import ABC, abstractmethod
 import logging
+from typing import NoReturn
 
 __all__ = ["AIProvider", "get_provider", "DEFAULT_SYSTEM_PROMPT"]
 
@@ -41,6 +42,22 @@ class AIProvider(ABC):
             Generated text response
         """
 
+    def _handle_api_error(self, e: Exception) -> NoReturn:
+        """Translate provider exceptions into RuntimeError with user-friendly messages."""
+        logger.error(f"API error: {e}")
+        # Check both exception type hierarchy and message string, since provider SDKs
+        # (openai, anthropic) wrap timeouts in their own exception types which may not
+        # inherit from Python's built-in TimeoutError.
+        is_timeout = isinstance(e, (TimeoutError, OSError)) or any(
+            kw in str(e).lower() for kw in ("timed out", "timeout")
+        )
+        if is_timeout:
+            raise RuntimeError(
+                f"Request timed out ({self.model}). "
+                f"Try reducing --count or using a faster model."
+            ) from e
+        raise RuntimeError(f"Failed to generate data: {e}") from e
+
 
 class OpenAIProvider(AIProvider):
     """OpenAI provider (GPT-4o, etc.)"""
@@ -67,13 +84,7 @@ class OpenAIProvider(AIProvider):
                 response_format={"type": "json_object"},
             )
         except Exception as e:
-            logger.error(f"OpenAI API error: {e}")
-            if "timed out" in str(e).lower():
-                raise RuntimeError(
-                    f"Request to OpenAI timed out ({self.model}). "
-                    f"Try reducing --count or using a faster model like gpt-4o-mini."
-                ) from e
-            raise RuntimeError(f"Failed to generate data with OpenAI: {e}") from e
+            self._handle_api_error(e)
 
         content = response.choices[0].message.content
         if content is None:
@@ -103,13 +114,7 @@ class AnthropicProvider(AIProvider):
                 messages=[{"role": "user", "content": prompt}],
             )
         except Exception as e:
-            logger.error(f"Anthropic API error: {e}")
-            if "timed out" in str(e).lower():
-                raise RuntimeError(
-                    f"Request to Anthropic timed out ({self.model}). "
-                    f"Try reducing --count or using a faster model."
-                ) from e
-            raise RuntimeError(f"Failed to generate data with Anthropic: {e}") from e
+            self._handle_api_error(e)
 
         if not response.content:
             raise RuntimeError("Anthropic returned an empty response")

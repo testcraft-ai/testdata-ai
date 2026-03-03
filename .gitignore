@@ -61,6 +61,10 @@ data.csv
 *.log
 logs/
 
+# testdata-ai runtime files
+.testdata_ai_cache/
+.testdata_ai.log
+
 # Temporary files
 *.tmp
 *.temp

@@ -119,7 +119,7 @@ class TestOpenAIProvider:
         provider, mock_client = openai_provider_mock
         mock_client.chat.completions.create.side_effect = Exception("rate limit")
 
-        with pytest.raises(RuntimeError, match="Failed to generate data with OpenAI"):
+        with pytest.raises(RuntimeError, match="Failed to generate data"):
             provider.generate("test prompt")
 
     def test_generate_raises_on_empty_response(self, openai_provider_mock):
@@ -213,9 +213,7 @@ class TestAnthropicProvider:
         provider, mock_client = anthropic_provider_mock
         mock_client.messages.create.side_effect = Exception("server error")
 
-        with pytest.raises(
-            RuntimeError, match="Failed to generate data with Anthropic"
-        ):
+        with pytest.raises(RuntimeError, match="Failed to generate data"):
             provider.generate("test prompt")
 
     def test_generate_raises_on_empty_response(self, anthropic_provider_mock):

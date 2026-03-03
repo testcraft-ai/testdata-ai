@@ -49,7 +49,7 @@ class TestPublicApi:
 
     def test_exports_expected_names(self):
         import testdata_ai
-        assert hasattr(testdata_ai, "TestDataGenerator")
+        assert hasattr(testdata_ai, "DataGenerator")
         assert hasattr(testdata_ai, "generate")
         assert hasattr(testdata_ai, "list_contexts")
         assert hasattr(testdata_ai, "get_context_schema")

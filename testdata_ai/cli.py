@@ -3,16 +3,16 @@
 import csv
 import io
 import json
-import os
 import sys
-import threading
 import time
+
+import yaml
 from typing import Any, Dict, List, Optional
 
 import click
 
 from testdata_ai.contexts import get_context_schema, list_contexts
-from testdata_ai.generator import TestDataGenerator
+from testdata_ai.generator import DataGenerator
 
 
 @click.group()
@@ -33,18 +33,11 @@ def cli():
 @click.option(
     "-o",
     "--output",
-    default=None,
-    type=click.Path(),
-    help="Output file path. Defaults to stdout.",
-)
-@click.option(
-    "-f",
-    "--format",
     "fmt",
     default="json",
     show_default=True,
-    type=click.Choice(["json", "csv"]),
-    help="Output format.",
+    type=click.Choice(["json", "jsonl", "csv", "yaml"]),
+    help="Output format. Write to file via shell redirection: -o csv > data.csv",
 )
 @click.option(
     "--provider", default=None, help="AI provider (overrides AI_PROVIDER env var)."
@@ -69,73 +62,52 @@ def cli():
     "-q", "--quiet", is_flag=True, help="Suppress status messages (only output data)."
 )
 def generate(
-    context, count, output, fmt, provider, model, max_tokens, temperature, no_validate, quiet
+    context, count, fmt, provider, model, max_tokens, temperature, no_validate, quiet
 ):
     """Generate realistic test data using AI."""
-    _apply_overrides(provider, model, max_tokens, temperature)
-
     try:
         schema = get_context_schema(context)
     except ValueError as e:
         raise click.ClickException(str(e))
 
     try:
-        gen = TestDataGenerator()
+        gen = DataGenerator(
+            provider=provider,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
     except (ValueError, ImportError) as e:
         raise click.ClickException(str(e))
 
-    _adjust_max_tokens(gen, schema, count, quiet)
+    _adjust_max_tokens(gen, schema, count, quiet, user_set=max_tokens is not None)
+
     records = _run_generation(gen, context, count, no_validate, quiet)
-    _report(records, count, gen.config.max_tokens, quiet)
-    _emit(records, fmt, output, quiet)
+    _report(records, count, gen.provider.max_tokens, quiet)
+    _emit(records, fmt)
 
 
-def _apply_overrides(provider, model, max_tokens, temperature):
-    """Push CLI flags into env vars for TestDataGenerator to pick up."""
-    if provider:
-        os.environ["AI_PROVIDER"] = provider
-    resolved = (provider or os.environ.get("AI_PROVIDER", "openai")).upper()
-    if model:
-        os.environ[f"{resolved}_MODEL"] = model
-    if max_tokens is not None:
-        os.environ[f"{resolved}_MAX_TOKENS"] = str(max_tokens)
-    if temperature is not None:
-        os.environ[f"{resolved}_TEMPERATURE"] = str(temperature)
+def _adjust_max_tokens(gen, context_schema, count, quiet, user_set):
+    """Auto-increase max_tokens when the estimate exceeds the current limit.
 
-
-def _adjust_max_tokens(gen, schema, count, quiet):
-    """Estimate required tokens and increase max_tokens if needed."""
-    sample_tokens = len(json.dumps(schema.sample)) // 3
-    estimated = int(sample_tokens * count * 1.3)
-    current = gen.config.max_tokens
-
-    if estimated <= current:
+    Skipped when the user explicitly passed --max-tokens (user_set=True).
+    """
+    if user_set:
         return
-
-    if quiet:
-        gen.provider.max_tokens = estimated
-        gen.config.max_tokens = estimated
+    tokens_per_record = max(len(json.dumps(context_schema.sample)) // 4, 50)
+    estimated = count * tokens_per_record
+    if gen.provider.max_tokens >= estimated:
         return
-
-    click.echo(
-        click.style(
-            f"Estimated tokens needed: ~{estimated} (current max_tokens={current})",
-            fg="yellow",
-        ),
-        err=True,
-    )
-    choice = click.prompt(
-        "How would you like to proceed?",
-        type=click.Choice(["increase", "continue", "cancel"]),
-        default="increase",
-        show_choices=True,
-    )
-    if choice == "cancel":
-        raise click.Abort()
-    if choice == "increase":
-        gen.provider.max_tokens = estimated
-        gen.config.max_tokens = estimated
-        click.echo(click.style(f"max_tokens set to {estimated}", fg="green"), err=True)
+    new_value = max(gen.provider.max_tokens * 2, estimated)
+    gen.set_max_tokens(new_value)
+    if not quiet:
+        click.echo(
+            click.style(
+                f"Auto-adjusted --max-tokens to {new_value} for {count} records.",
+                fg="yellow",
+            ),
+            err=True,
+        )
 
 
 def _run_generation(gen, context, count, no_validate, quiet):
@@ -167,16 +139,17 @@ def _report(records, count, current_max, quiet):
         click.echo(click.style(f"Generated {len(records)} records.", fg="green"), err=True)
 
 
-def _emit(records, fmt, output, quiet):
-    """Format records and write to file or stdout."""
-    text = _records_to_csv(records) if fmt == "csv" else json.dumps(records, indent=2)
-    if output:
-        with open(output, "w") as f:
-            f.write(text)
-        if not quiet:
-            click.echo(click.style(f"Saved to {output}", fg="green"), err=True)
+def _emit(records, fmt):
+    """Format records and write to stdout."""
+    if fmt == "csv":
+        text = _records_to_csv(records)
+    elif fmt == "jsonl":
+        text = "\n".join(json.dumps(r) for r in records)
+    elif fmt == "yaml":
+        text = yaml.dump(records, allow_unicode=True, sort_keys=False)
     else:
-        click.echo(text)
+        text = json.dumps(records, indent=2)
+    click.echo(text)
 
 
 @cli.command("list-contexts")
@@ -225,41 +198,25 @@ def show_context(context):
 
 
 class _Spinner:
-    """Animated spinner with elapsed time for long-running operations."""
-
-    _FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+    """Simple context manager that prints start/done messages to stderr."""
 
     def __init__(self, message: str, silent: bool = False):
         self._message = message
         self._silent = silent
-        self._stop = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._start: Optional[float] = None
 
     def __enter__(self):
         if not self._silent:
-            self._thread = threading.Thread(target=self._spin, daemon=True)
-            self._thread.start()
+            sys.stderr.write(f"  {self._message}...\n")
+            sys.stderr.flush()
+            self._start = time.monotonic()
         return self
 
     def __exit__(self, *args):
-        self._stop.set()
-        if self._thread:
-            self._thread.join()
-            # Clear the spinner line
-            sys.stderr.write("\r\033[K")
+        if not self._silent and self._start is not None:
+            elapsed = time.monotonic() - self._start
+            sys.stderr.write(f"  Done ({elapsed:.1f}s)\n")
             sys.stderr.flush()
-
-    def _spin(self):
-        start = time.monotonic()
-        i = 0
-        while not self._stop.wait(0.1):
-            elapsed = time.monotonic() - start
-            frame = self._FRAMES[i % len(self._FRAMES)]
-            sys.stderr.write(
-                f"\r{frame} {self._message} ({elapsed:.0f}s)"
-            )
-            sys.stderr.flush()
-            i += 1
 
 
 def _records_to_csv(records: List[Dict[str, Any]]) -> str:
@@ -267,14 +224,7 @@ def _records_to_csv(records: List[Dict[str, Any]]) -> str:
     if not records:
         return ""
     flat = [_flatten_dict(r) for r in records]
-    # Union all keys across records for consistent columns
-    fieldnames: List[str] = []
-    seen: set = set()
-    for row in flat:
-        for key in row:
-            if key not in seen:
-                fieldnames.append(key)
-                seen.add(key)
+    fieldnames = list(dict.fromkeys(key for row in flat for key in row))
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
@@ -286,13 +236,13 @@ def _flatten_dict(
     d: Dict[str, Any], parent_key: str = "", sep: str = "."
 ) -> Dict[str, Any]:
     """Flatten nested dict: {'a': {'b': 1}} -> {'a.b': 1}."""
-    items: list = []
+    result: Dict[str, Any] = {}
     for k, v in d.items():
         new_key = f"{parent_key}{sep}{k}" if parent_key else k
         if isinstance(v, dict):
-            items.extend(_flatten_dict(v, new_key, sep).items())
+            result.update(_flatten_dict(v, new_key, sep))
         elif isinstance(v, list):
-            items.append((new_key, json.dumps(v)))
+            result[new_key] = json.dumps(v)
         else:
-            items.append((new_key, v))
-    return dict(items)
+            result[new_key] = v
+    return result

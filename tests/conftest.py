@@ -9,6 +9,24 @@ from testdata_ai.ai_providers import OpenAIProvider, AnthropicProvider
 from testdata_ai.contexts import ContextSchema
 
 
+pytest_plugins = ["testdata_ai.pytest_plugin", "pytester"]
+
+
+@pytest.fixture(autouse=True)
+def _attach_caplog_to_testdata_logger(caplog):
+    """Attach caplog handler directly to testdata_ai logger.
+
+    The testdata_ai logger sets propagate=False to prevent double-logging
+    in user projects that configure the root logger. This fixture re-attaches
+    caplog's handler so that caplog still captures testdata_ai log messages.
+    """
+    import logging
+    logger = logging.getLogger("testdata_ai")
+    logger.addHandler(caplog.handler)
+    yield
+    logger.removeHandler(caplog.handler)
+
+
 @pytest.fixture
 def runner():
     return CliRunner()
@@ -48,7 +66,7 @@ def anthropic_provider_mock():
 
 @pytest.fixture
 def mock_generator(max_tokens=4096):
-    """Create a mocked TestDataGenerator for CLI tests."""
+    """Create a mocked DataGenerator for CLI tests."""
     gen = MagicMock()
     gen.config.max_tokens = max_tokens
     gen.provider.max_tokens = max_tokens

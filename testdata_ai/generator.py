@@ -3,38 +3,34 @@ Core test data generator - provider agnostic.
 Supports OpenAI, Anthropic, and other AI providers.
 """
 
-__all__ = ["TestDataGenerator", "generate"]
+__all__ = ["DataGenerator", "generate"]
 
 import json
-import re
 from typing import Dict, List, Any, Optional
 import logging
 
 from testdata_ai.prompts import get_prompt
 from testdata_ai.contexts import (
-    get_context_schema,
     validate_generated_data,
-    list_contexts,
-    ContextSchema,
     ValidationError,
 )
-from testdata_ai.config import get_provider_config, AIProviderConfig, DEFAULT_MODELS
+from testdata_ai.config import get_provider_config
 from testdata_ai.ai_providers import get_provider, AIProvider
 
 logger = logging.getLogger(__name__)
 
 
-class TestDataGenerator:
+class DataGenerator:
     """AI-powered test data generator.
 
     Generates realistic, context-aware test data using AI providers
     (OpenAI, Anthropic, or others).
 
     Example:
-        >>> gen = TestDataGenerator()
+        >>> gen = DataGenerator()
         >>> data = gen.generate("ecommerce_customer", count=10)
 
-        >>> gen = TestDataGenerator(provider="anthropic")
+        >>> gen = DataGenerator(provider="anthropic")
         >>> data = gen.generate("banking_user", count=5)
     """
 
@@ -44,6 +40,7 @@ class TestDataGenerator:
         api_key: Optional[str] = None,
         model: Optional[str] = None,
         temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
     ):
         """Initialize the generator.
 
@@ -52,32 +49,33 @@ class TestDataGenerator:
             api_key: API key (if None, reads from .env based on provider)
             model: Model name (if None, uses default for provider)
             temperature: Sampling temperature 0.0-1.0 (if None, uses default)
+            max_tokens: Maximum tokens for response (if None, uses default)
 
         Note:
             If arguments are None, values are read from the .env file.
-            When passing api_key, provider is required; model and temperature
-            will use provider defaults if not specified.
+            When passing api_key, provider is required.
         """
         if api_key is not None:
             if not api_key.strip():
                 raise ValueError("api_key must not be empty")
             if provider is None:
-                raise ValueError(
-                    "When using custom api_key, you must specify provider"
-                )
-            if provider not in DEFAULT_MODELS:
-                supported = ", ".join(DEFAULT_MODELS)
-                raise ValueError(
-                    f"Unsupported provider: '{provider}'. Supported: {supported}"
-                )
-            self.config = AIProviderConfig(
-                provider=provider,
-                api_key=api_key,
-                model=model or DEFAULT_MODELS[provider],
-                temperature=temperature if temperature is not None else 0.7,
-            )
-        else:
-            self.config = get_provider_config(provider)
+                raise ValueError("When using custom api_key, you must specify provider")
+
+        # Always load from env as base; explicit args override individual fields.
+        # Only forward api_key when the caller explicitly supplied one.
+        self.config = (
+            get_provider_config(provider, api_key=api_key)
+            if api_key is not None
+            else get_provider_config(provider)
+        )
+        if model:
+            self.config.model = model
+        if temperature is not None:
+            if not 0.0 <= temperature <= 1.0:
+                raise ValueError(f"temperature must be 0.0-1.0, got {temperature}")
+            self.config.temperature = temperature
+        if max_tokens is not None:
+            self.config.max_tokens = max_tokens
 
         self.provider: AIProvider = get_provider(
             provider_name=self.config.provider,
@@ -91,6 +89,11 @@ class TestDataGenerator:
             f"Initialized generator with {self.config.provider} provider "
             f"(model: {self.config.model})"
         )
+
+    def set_max_tokens(self, value: int) -> None:
+        """Update max_tokens on both the config and the underlying provider."""
+        self.config.max_tokens = value
+        self.provider.max_tokens = value
 
     def generate(
         self,
@@ -134,15 +137,19 @@ class TestDataGenerator:
             logger.debug(f"Response preview: {response[:200]!r}")
             raise ValueError(f"AI response is not valid JSON: {e}") from e
 
-        # Normalize to a list of records (JSON object mode wraps arrays
-        # under an arbitrary key like "data", "customers", "records", etc.)
+        # Normalize to a list of records. The prompt asks for {"data": [...]};
+        # fall back to the first list of dicts found in the response values.
         if isinstance(data, dict):
-            for value in data.values():
-                if isinstance(value, list):
-                    records = value
-                    break
+            if isinstance(data.get("data"), list):
+                records = data["data"]
             else:
-                records = [data]
+                for v in data.values():
+                    if isinstance(v, list) and v and isinstance(v[0], dict):
+                        records = v
+                        break
+                else:
+                    # Wrap the entire dict as a single record.
+                    records = [data]
         elif isinstance(data, list):
             records = data
         else:
@@ -162,38 +169,29 @@ class TestDataGenerator:
 
         return records
 
-    def list_available_contexts(self) -> List[str]:
-        """List all available context identifiers."""
-        return list_contexts()
-
-    def get_context_details(self, context: str) -> ContextSchema:
-        """Get schema details for a context."""
-        return get_context_schema(context)
-
-
-_MARKDOWN_FENCE_RE = re.compile(r"^(?:```[^\n]*\n)?(.*?)(?:```\s*)?$", re.DOTALL)
-
 
 def _strip_markdown_fences(text: str) -> str:
-    """Remove markdown code fences that some AI providers wrap JSON in.
-
-    Handles all common fence variants (```json, ```JSON, ``` json, etc.),
-    including missing closing fences.
-    """
+    """Remove markdown code fences that some AI providers wrap JSON in."""
     text = text.strip()
-    # Regex always matches (all groups are optional), so .group(1) is safe.
-    return _MARKDOWN_FENCE_RE.match(text).group(1).strip()
+    if text.startswith("```"):
+        first_newline = text.find("\n")
+        if first_newline != -1:
+            text = text[first_newline + 1:]
+        # else: malformed fence with no newline — leave text as-is
+    if text.endswith("```"):
+        text = text[:text.rfind("```")].rstrip()
+    return text.strip()
 
 
 def generate(context: str, count: int = 10) -> List[Dict[str, Any]]:
     """Convenience function for one-off generation.
 
-    Creates a new TestDataGenerator each call. For repeated use,
-    instantiate TestDataGenerator directly.
+    Creates a new DataGenerator each call. For repeated use,
+    instantiate DataGenerator directly.
 
     Example:
         >>> from testdata_ai import generate
         >>> customers = generate('ecommerce_customer', 20)
     """
-    gen = TestDataGenerator()
+    gen = DataGenerator()
     return gen.generate(context, count)

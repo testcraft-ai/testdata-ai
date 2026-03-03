@@ -88,6 +88,9 @@ class TestBuiltinContexts:
 
     ALL_CONTEXT_NAMES = list(CONTEXTS.keys())
 
+    def test_expected_builtin_context_count(self):
+        assert len(CONTEXTS) == 13
+
     @pytest.mark.parametrize("name", ALL_CONTEXT_NAMES)
     def test_schema_has_nonempty_description(self, name):
         assert CONTEXTS[name].description
