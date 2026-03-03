@@ -15,6 +15,7 @@ __all__ = ["AIProviderConfig", "get_provider_config"]
 DEFAULT_MODELS = {
     "openai": "gpt-4o-mini",
     "anthropic": "claude-haiku-4-5-20251001",
+    "ollama": "qwen2.5:14b",
 }
 
 
@@ -62,10 +63,13 @@ def get_provider_config(
 
     resolved_key = api_key or os.getenv(f"{prefix}_API_KEY", "").strip()
     if not resolved_key:
-        raise ValueError(
-            f"{prefix} API key not found! "
-            f"Set {prefix}_API_KEY in .env file or environment."
-        )
+        if provider == "ollama":
+            resolved_key = "ollama"  # Ollama runs locally and doesn't require an API key
+        else:
+            raise ValueError(
+                f"{prefix} API key not found! "
+                f"Set {prefix}_API_KEY in .env file or environment."
+            )
 
     return AIProviderConfig(
         provider=provider,

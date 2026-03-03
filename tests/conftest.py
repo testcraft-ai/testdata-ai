@@ -5,7 +5,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 from click.testing import CliRunner
 
-from testdata_ai.ai_providers import OpenAIProvider, AnthropicProvider
+from testdata_ai.ai_providers import OpenAIProvider, AnthropicProvider, OllamaProvider
 from testdata_ai.contexts import ContextSchema
 
 
@@ -39,6 +39,8 @@ def clean_ai_env_fixture(monkeypatch):
         "AI_PROVIDER",
         "OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_TEMPERATURE", "OPENAI_MAX_TOKENS",
         "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL", "ANTHROPIC_TEMPERATURE", "ANTHROPIC_MAX_TOKENS",
+        "OLLAMA_API_KEY", "OLLAMA_MODEL", "OLLAMA_TEMPERATURE", "OLLAMA_MAX_TOKENS",
+        "OLLAMA_BASE_URL",
     ]:
         monkeypatch.delenv(var, raising=False)
     return monkeypatch
@@ -62,6 +64,22 @@ def anthropic_provider_mock():
     mock_client = MagicMock()
     provider.client = mock_client
     return provider, mock_client
+
+
+@pytest.fixture
+def ollama_provider_mock():
+    """Create an OllamaProvider with a mocked urllib.request."""
+    with patch.object(OllamaProvider, "_init_client"):
+        provider = OllamaProvider("ollama", "qwen2.5:14b", 0.7, 4096)
+    mock_urllib = MagicMock()
+    provider._urllib = mock_urllib
+    provider.base_url = "http://localhost:11434"
+    provider._timeout = 600
+    provider._model_validated = True    # skip validation in existing tests
+    provider._max_retries = 0           # no retry loop in existing error tests
+    provider._use_json_format = True    # keep format assertions passing
+    provider._sleep = lambda s: None    # no real sleep in tests
+    return provider, mock_urllib
 
 
 @pytest.fixture

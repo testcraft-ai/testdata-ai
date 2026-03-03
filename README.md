@@ -2,7 +2,7 @@
 
 AI-powered test data generator for QA engineers.
 
-Generate realistic, context-aware test data using GPT-4o or Claude — because `test@test.com` and `John Doe` aren't cutting it anymore.
+Generate realistic, context-aware test data using GPT-4o, Claude, or a local Ollama model — because `test@test.com` and `John Doe` aren't cutting it anymore.
 
 ![PyPI](https://img.shields.io/pypi/v/testdata-ai)
 ![Status](https://img.shields.io/badge/status-alpha-orange)
@@ -29,7 +29,8 @@ Generate realistic, context-aware test data using GPT-4o or Claude — because `
 ```bash
 pip install "testdata-ai[openai]"       # OpenAI only
 pip install "testdata-ai[anthropic]"    # Anthropic only
-pip install "testdata-ai[all]"          # Both providers
+pip install "testdata-ai[ollama]"       # Ollama only (no extra packages — uses stdlib)
+pip install "testdata-ai[all]"          # All providers
 ```
 
 ### Development install (from source)
@@ -49,7 +50,7 @@ Create a `.env` file in the project root:
 
 ```bash
 # Provider selection
-AI_PROVIDER=openai          # or 'anthropic'
+AI_PROVIDER=openai          # openai | anthropic | ollama
 
 # OpenAI
 OPENAI_API_KEY=sk-proj-...
@@ -62,9 +63,15 @@ ANTHROPIC_API_KEY=sk-ant-...
 ANTHROPIC_MODEL=claude-haiku-4-5-20251001   # default
 ANTHROPIC_MAX_TOKENS=4096
 ANTHROPIC_TEMPERATURE=0.7
+
+# Ollama (local, no API key required)
+OLLAMA_BASE_URL=http://localhost:11434  # default
+OLLAMA_MODEL=qwen2.5:14b               # default
+OLLAMA_MAX_TOKENS=4096
+OLLAMA_TEMPERATURE=0.7
 ```
 
-All env vars are optional except `*_API_KEY`. Defaults: `gpt-4o-mini` / `claude-haiku-4-5-20251001`, temperature `0.7`, max_tokens `4096`.
+All env vars are optional except `*_API_KEY` (Ollama requires no API key). Defaults: `gpt-4o-mini` / `claude-haiku-4-5-20251001` / `qwen2.5:14b`, temperature `0.7`, max_tokens `4096`.
 
 ---
 
@@ -85,7 +92,7 @@ testdata-ai generate --context <name> [OPTIONS]
 | `--context TEXT` | (required) | Context name (see [Available Contexts](#available-contexts)) |
 | `--count INTEGER` | `10` | Number of records to generate |
 | `-o, --output [json\|jsonl\|csv\|yaml]` | `json` | Output format. Write to file via shell redirection: `-o csv > data.csv` |
-| `--provider TEXT` | from env | AI provider override (`openai` / `anthropic`) |
+| `--provider TEXT` | from env | AI provider override (`openai` / `anthropic` / `ollama`) |
 | `--model TEXT` | from env | Model name override |
 | `--max-tokens INTEGER` | from env | Max tokens for AI response |
 | `--temperature FLOAT` | from env | Sampling temperature `0.0–1.0` |
@@ -103,6 +110,9 @@ testdata-ai generate --context saas_trial --count 50 -o csv > trials.csv
 
 # Use Anthropic instead of the default provider
 testdata-ai generate --context banking_user --count 5 --provider anthropic
+
+# Use a local Ollama model
+testdata-ai generate --context ecommerce_customer --count 10 --provider ollama
 
 # Use a specific model with higher token budget
 testdata-ai generate --context hr_employee --count 30 --model gpt-4o --max-tokens 8192
@@ -158,6 +168,24 @@ testdata-ai show-context logistics_shipment
 
 ---
 
+### `list-models` _(Ollama only)_
+
+List models available in the running Ollama instance.
+
+```bash
+testdata-ai list-models [--provider ollama]
+```
+
+```bash
+# Requires AI_PROVIDER=ollama in .env, or pass --provider explicitly
+testdata-ai list-models
+testdata-ai list-models --provider ollama
+```
+
+If no models are found, the command prints a hint to run `ollama pull <model>`.
+
+---
+
 ## Python API
 
 ### `DataGenerator`
@@ -170,6 +198,10 @@ gen = DataGenerator()
 
 # Explicit provider
 gen = DataGenerator(provider="anthropic")
+
+# Local Ollama model (no API key needed)
+gen = DataGenerator(provider="ollama")
+gen = DataGenerator(provider="ollama", model="mistral:latest")
 
 # Full control
 gen = DataGenerator(
@@ -441,10 +473,10 @@ users = gen.generate("ecommerce_customer", count=50)
 ## Development Roadmap
 
 **Done:**
-- [x] OpenAI + Anthropic provider-agnostic architecture
+- [x] OpenAI + Anthropic + Ollama provider-agnostic architecture
 - [x] 13 built-in contexts across 13 categories
 - [x] Schema validation with missing-field reporting
-- [x] CLI (`generate`, `list-contexts`, `show-context`) with JSON, JSONL, CSV, and YAML output
+- [x] CLI (`generate`, `list-contexts`, `show-context`, `list-models`) with JSON, JSONL, CSV, and YAML output
 - [x] Auto token estimation and adjustment
 - [x] Spinner with elapsed time
 - [x] `python -m testdata_ai` support

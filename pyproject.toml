@@ -35,6 +35,7 @@ dependencies = [
 [project.optional-dependencies]
 openai = ["openai>=1.10.0"]
 anthropic = ["anthropic>=0.18.0"]
+ollama = []  # No extra packages needed — uses stdlib urllib.request; requires a running Ollama instance
 all = ["openai>=1.10.0", "anthropic>=0.18.0"]
 dev = [
     "pytest>=7.0.0",

@@ -143,3 +143,18 @@ class TestGetProviderConfig:
         monkeypatch.setenv("OPENAI_MAX_TOKENS", "xyz")
         with pytest.raises(ValueError):
             get_provider_config("openai")
+
+    def test_loads_ollama_without_api_key(self):
+        cfg = get_provider_config("ollama")
+        assert cfg.provider == "ollama"
+        assert cfg.api_key == "ollama"
+        assert cfg.model == "qwen2.5:14b"
+
+    def test_ollama_custom_model_from_env(self, monkeypatch):
+        monkeypatch.setenv("OLLAMA_MODEL", "mistral")
+        cfg = get_provider_config("ollama")
+        assert cfg.model == "mistral"
+
+    def test_ollama_explicit_api_key_is_accepted(self):
+        cfg = get_provider_config("ollama", api_key="custom-key")
+        assert cfg.api_key == "custom-key"

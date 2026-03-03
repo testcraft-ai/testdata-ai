@@ -1,10 +1,15 @@
 """
 AI provider abstractions.
-Supports multiple AI providers (OpenAI, Anthropic, etc.)
+Supports multiple AI providers (OpenAI, Anthropic, Ollama, etc.)
 """
 
 from abc import ABC, abstractmethod
+import json
 import logging
+import os
+import time
+import urllib.error
+import urllib.request
 from typing import NoReturn
 
 __all__ = ["AIProvider", "get_provider", "DEFAULT_SYSTEM_PROMPT"]
@@ -121,9 +126,160 @@ class AnthropicProvider(AIProvider):
         return response.content[0].text
 
 
+class OllamaProvider(AIProvider):
+    """Ollama provider for local LLMs (llama3.2, mistral, phi3, etc.)
+
+    Requires a running Ollama instance (https://ollama.com).
+    No API key needed. Configure base URL via OLLAMA_BASE_URL env var
+    (default: http://localhost:11434).
+    """
+
+    def _handle_api_error(self, e: Exception) -> NoReturn:
+        if isinstance(e, urllib.error.HTTPError):
+            if e.code == 404:
+                raise RuntimeError(
+                    f"Model '{self.model}' not found in Ollama. "
+                    f"Run: ollama pull {self.model}"
+                ) from e
+            raise RuntimeError(f"Ollama HTTP error {e.code}: {e.reason}") from e
+        if isinstance(e, urllib.error.URLError):
+            if "connection refused" in str(e.reason).lower():
+                raise RuntimeError(
+                    "Cannot connect to Ollama. Is it running? Try: ollama serve"
+                ) from e
+        super()._handle_api_error(e)
+
+    def _init_client(self, _api_key: str) -> None:
+        self.base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+        self._timeout = int(os.getenv("OLLAMA_TIMEOUT", "600"))
+        self._max_retries = int(os.getenv("OLLAMA_MAX_RETRIES", "3"))
+        self._use_json_format = os.getenv("OLLAMA_JSON_FORMAT", "true").lower() != "false"
+        self._model_validated = False
+        # Store urllib.request and time.sleep on the instance so tests can mock them easily.
+        self._urllib = urllib.request
+        self._sleep = time.sleep
+
+    def _validate_model(self) -> None:
+        """Check that the model exists in Ollama before the first generate call.
+
+        Calls POST /api/show. On success sets _model_validated = True so the
+        check is skipped on subsequent calls.
+        """
+        payload = json.dumps({"name": self.model}).encode()
+        req = self._urllib.Request(
+            f"{self.base_url}/api/show",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with self._urllib.urlopen(req, timeout=self._timeout):
+                pass  # 200 OK is sufficient
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                raise RuntimeError(
+                    f"Model '{self.model}' not found in Ollama. "
+                    f"Run: ollama pull {self.model}"
+                ) from e
+            self._handle_api_error(e)
+        except Exception as e:
+            self._handle_api_error(e)
+        self._model_validated = True
+
+    def generate(self, prompt: str, system_prompt: str = DEFAULT_SYSTEM_PROMPT) -> str:
+        if not self._model_validated:
+            self._validate_model()
+
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        body: dict = {
+            "model": self.model,
+            "messages": messages,
+            "stream": False,
+            "options": {
+                "temperature": self.temperature,
+                "num_predict": self.max_tokens,
+            },
+        }
+        if self._use_json_format:
+            body["format"] = "json"
+
+        payload = json.dumps(body).encode()
+        req = self._urllib.Request(
+            f"{self.base_url}/api/chat",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        last_exc: Exception = RuntimeError("No attempts made")
+        raw = b""
+        for attempt in range(self._max_retries + 1):
+            try:
+                with self._urllib.urlopen(req, timeout=self._timeout) as resp:
+                    raw = resp.read()
+                break  # success
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    self._handle_api_error(e)  # never retry 404
+                if e.code >= 500:
+                    last_exc = e
+                    if attempt < self._max_retries:
+                        self._sleep(2 ** attempt)
+                        continue
+                self._handle_api_error(e)  # 4xx other than 404
+            except urllib.error.URLError as e:
+                last_exc = e
+                if attempt < self._max_retries:
+                    self._sleep(2 ** attempt)
+                    continue
+                self._handle_api_error(e)
+            except Exception as e:
+                self._handle_api_error(e)
+        else:
+            self._handle_api_error(last_exc)
+
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(
+                "Ollama returned invalid JSON. Some models may not support JSON format "
+                "mode — try a different model or set OLLAMA_JSON_FORMAT=false"
+            ) from e
+
+        content = data.get("message", {}).get("content", "")
+        if not content:
+            raise RuntimeError("Ollama returned an empty response")
+        return content
+
+    def list_models(self) -> list:
+        """Return list of model names available in this Ollama instance.
+
+        Calls GET /api/tags.
+
+        Raises:
+            RuntimeError: If Ollama is not running or an HTTP error occurs.
+        """
+        req = self._urllib.Request(
+            f"{self.base_url}/api/tags",
+            headers={"Content-Type": "application/json"},
+            method="GET",
+        )
+        try:
+            with self._urllib.urlopen(req, timeout=self._timeout) as resp:
+                data = json.loads(resp.read())
+        except Exception as e:
+            self._handle_api_error(e)
+        return [m["name"] for m in data.get("models", [])]
+
+
 _PROVIDERS = {
     "openai": OpenAIProvider,
     "anthropic": AnthropicProvider,
+    "ollama": OllamaProvider,
 }
 
 

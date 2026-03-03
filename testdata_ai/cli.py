@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 
 import click
 
+from testdata_ai.ai_providers import OllamaProvider
 from testdata_ai.contexts import get_context_schema, list_contexts
 from testdata_ai.generator import DataGenerator
 
@@ -195,6 +196,37 @@ def show_context(context):
     click.echo(click.style("Prompt hints:", bold=True))
     for hint in schema.prompt_hints:
         click.echo(f"  - {hint}")
+
+
+@cli.command("list-models")
+@click.option("--provider", default=None, help="AI provider (overrides AI_PROVIDER env var).")
+def list_models_cmd(provider):
+    """List models available in the configured Ollama instance."""
+    try:
+        gen = DataGenerator(provider=provider)
+    except (ValueError, ImportError) as e:
+        raise click.ClickException(str(e))
+
+    if not isinstance(gen.provider, OllamaProvider):
+        raise click.ClickException(
+            f"list-models is only supported for Ollama "
+            f"(current provider: {gen.config.provider}). "
+            f"Use --provider ollama or set AI_PROVIDER=ollama."
+        )
+
+    try:
+        models = gen.provider.list_models()
+    except RuntimeError as e:
+        raise click.ClickException(str(e))
+
+    if not models:
+        click.echo("No models found. Run: ollama pull <model>")
+        return
+
+    click.echo(click.style(f"{'Model':<40}", fg="cyan", bold=True))
+    click.echo("-" * 40)
+    for name in models:
+        click.echo(name)
 
 
 class _Spinner:
