@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/testcraft-ai/testdata-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/testcraft-ai/testdata-ai/actions/workflows/ci.yml)
 [![Coverage](https://codecov.io/gh/testcraft-ai/testdata-ai/branch/main/graph/badge.svg)](https://codecov.io/gh/testcraft-ai/testdata-ai)
-[![PyPI](https://img.shields.io/pypi/v/testdata-ai)](https://pypi.org/project/testdata-ai/)
+[![PyPI](https://img.shields.io/pypi/v/testdata-ai?cacheSeconds=300)](https://pypi.org/project/testdata-ai/)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://pypi.org/project/testdata-ai/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
