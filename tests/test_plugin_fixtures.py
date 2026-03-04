@@ -74,7 +74,7 @@ class TestPytestConfigure:
 
         config.addinivalue_line.assert_called_once_with(
             "markers",
-            "testdata(context, count=1): generate AI test data",
+            "testdata(context, count=1, locale=None): generate AI test data",
         )
 
     def test_creates_cache_manager_with_temp_seed_when_no_seed_given(self):
@@ -291,7 +291,7 @@ class TestTestdataFixture:
 
         result = self._call_testdata(request)
 
-        cm.get_data.assert_called_once_with("ecommerce_customer", 3)
+        cm.get_data.assert_called_once_with("ecommerce_customer", 3, locale=None)
         assert result == expected
 
     def test_defaults_count_to_1(self):
@@ -306,7 +306,7 @@ class TestTestdataFixture:
 
         self._call_testdata(request)
 
-        cm.get_data.assert_called_once_with("banking_user", 1)
+        cm.get_data.assert_called_once_with("banking_user", 1, locale=None)
 
     def test_fails_with_actionable_message_when_plugin_setup_missing(self):
         marker = MagicMock()

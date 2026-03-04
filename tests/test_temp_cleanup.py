@@ -28,4 +28,4 @@ def test_with_temp_seed():
 
     assert len(result) == 1
     assert result[0] is not None
-    cm.get_data.assert_called_once_with("ecommerce_customer", 1)
+    cm.get_data.assert_called_once_with("ecommerce_customer", 1, locale=None)

@@ -8,7 +8,7 @@ from testdata_ai.cache_manager import CacheManager, _validate_seed_name
 
 
 class _GeneratorStub:
-    def generate(self, context, count):
+    def generate(self, context, count, locale=None):
         return []
 
 
@@ -17,7 +17,7 @@ class _GeneratorStubWithData:
         self.records = records
         self.call_count = 0
 
-    def generate(self, context, count):
+    def generate(self, context, count, locale=None):
         self.call_count += 1
         return self.records[:count]
 

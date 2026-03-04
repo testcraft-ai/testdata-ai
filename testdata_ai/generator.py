@@ -6,6 +6,7 @@ Supports OpenAI, Anthropic, and other AI providers.
 __all__ = ["DataGenerator", "generate", "generate_batched"]
 
 import json
+import os
 from typing import Dict, Iterator, List, Any, Optional
 import logging
 
@@ -41,6 +42,7 @@ class DataGenerator:
         model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        locale: Optional[str] = None,
     ):
         """Initialize the generator.
 
@@ -50,6 +52,9 @@ class DataGenerator:
             model: Model name (if None, uses default for provider)
             temperature: Sampling temperature 0.0-1.0 (if None, uses default)
             max_tokens: Maximum tokens for response (if None, uses default)
+            locale: BCP 47 locale tag for generated values (e.g. 'pl', 'ja').
+                If None, reads from AI_LOCALE env var; if unset, no locale
+                instruction is added and the AI produces English data by default.
 
         Note:
             If arguments are None, values are read from the .env file.
@@ -76,6 +81,8 @@ class DataGenerator:
             self.config.temperature = temperature
         if max_tokens is not None:
             self.config.max_tokens = max_tokens
+
+        self.locale: Optional[str] = locale or os.getenv("AI_LOCALE") or None
 
         self.provider: AIProvider = get_provider(
             provider_name=self.config.provider,
@@ -120,7 +127,7 @@ class DataGenerator:
 
         logger.info(f"Generating {count} records for context: {context}")
 
-        prompt = get_prompt(context, count)  # raises ValueError if context unknown
+        prompt = get_prompt(context, count, locale=self.locale)  # raises ValueError if context unknown
         logger.debug(f"Sending prompt to {self.provider.__class__.__name__}")
 
         response = _strip_markdown_fences(self.provider.generate(prompt))
@@ -219,7 +226,11 @@ def _strip_markdown_fences(text: str) -> str:
 
 
 def generate_batched(
-    context: str, count: int = 10, batch_size: int = 10, validate: bool = True
+    context: str,
+    count: int = 10,
+    batch_size: int = 10,
+    validate: bool = True,
+    locale: Optional[str] = None,
 ) -> Iterator[List[Dict[str, Any]]]:
     """Convenience function for batched generation.
 
@@ -231,12 +242,16 @@ def generate_batched(
         >>> for batch in generate_batched('ecommerce_customer', 50, batch_size=10):
         ...     process(batch)
     """
-    gen = DataGenerator()
+    gen = DataGenerator(locale=locale)
     yield from gen.generate_batched(context, count, batch_size, validate=validate)
 
 
 def generate(
-    context: str, count: int = 10, batch_size: int = 10, validate: bool = True
+    context: str,
+    count: int = 10,
+    batch_size: int = 10,
+    validate: bool = True,
+    locale: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Convenience function for one-off generation.
 
@@ -249,7 +264,7 @@ def generate(
         >>> customers = generate('ecommerce_customer', 20)
         >>> many = generate('ecommerce_customer', 100, batch_size=20)
     """
-    gen = DataGenerator()
+    gen = DataGenerator(locale=locale)
     results: List[Dict[str, Any]] = []
     for batch in gen.generate_batched(context, count, batch_size, validate=validate):
         results.extend(batch)

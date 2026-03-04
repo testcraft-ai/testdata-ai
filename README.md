@@ -101,6 +101,11 @@ OLLAMA_MAX_TOKENS=4096
 OLLAMA_TEMPERATURE=0.7
 ```
 
+```bash
+# Locale (optional — applies to all providers)
+AI_LOCALE=pl   # BCP 47 tag; overridden by --locale or locale= per call
+```
+
 All env vars are optional except `*_API_KEY` (Ollama requires no API key). Defaults: `gpt-4o-mini` / `claude-haiku-4-5-20251001` / `qwen2.5:14b`, temperature `0.7`, max_tokens `4096`.
 
 ---
@@ -127,6 +132,7 @@ testdata-ai generate --context <name> [OPTIONS]
 | `--model TEXT` | from env | Model name override |
 | `--max-tokens INTEGER` | from env | Max tokens per AI call (auto-adjusted to `batch-size` by default) |
 | `--temperature FLOAT` | from env | Sampling temperature `0.0–1.0` |
+| `--locale TEXT` | from env | Locale/language for generated values (e.g. `pl`, `ja`, `de`). Overrides `AI_LOCALE` env var |
 | `--no-validate` | off | Skip schema validation |
 | `--context-file PATH` | — | YAML or JSON file with custom context definitions (repeatable) |
 | `-q, --quiet` | off | Suppress status messages (data only to stdout) |
@@ -148,6 +154,12 @@ testdata-ai generate --context banking_user --count 5 --provider anthropic
 
 # Use a local Ollama model
 testdata-ai generate --context ecommerce_customer --count 10 --provider ollama
+
+# Generate data in Polish
+testdata-ai generate --context ecommerce_customer --count 5 --locale pl
+
+# Generate data in Japanese, save as CSV
+testdata-ai generate --context banking_user --count 10 --locale ja -o csv > data.csv
 
 # Use a specific model with higher token budget
 testdata-ai generate --context hr_employee --count 30 --model gpt-4o --max-tokens 8192
@@ -263,6 +275,10 @@ gen = DataGenerator(
 # Pass API key directly (provider required when using api_key)
 gen = DataGenerator(provider="openai", api_key="sk-proj-...")
 
+# Generate data in a specific locale
+gen = DataGenerator(locale="pl")   # Polish names, addresses, etc.
+gen = DataGenerator(locale="ja")   # Japanese
+
 # Generate records
 customers = gen.generate("ecommerce_customer", count=10)
 patients  = gen.generate("healthcare_patient", count=5)
@@ -290,6 +306,9 @@ For one-off use without instantiating the class:
 from testdata_ai import generate
 
 customers = generate("ecommerce_customer", count=20)
+
+# Generate in a specific locale
+polish_customers = generate("ecommerce_customer", count=20, locale="pl")
 
 # Large counts split automatically into 20-record batches
 many = generate("ecommerce_customer", count=100, batch_size=20)
@@ -490,6 +509,11 @@ def test_checkout_flow(testdata):
 def test_single_bank_user(testdata):
     user = testdata[0]
     assert 300 <= user["credit_score"] <= 850
+
+# Generate data in a specific locale
+@pytest.mark.testdata(context="ecommerce_customer", count=3, locale="pl")
+def test_polish_customers(testdata):
+    assert len(testdata) == 3
 ```
 
 ### Auto-generated context fixtures
@@ -634,12 +658,12 @@ Run `testdata-ai list-contexts` to see all contexts, or `testdata-ai show-contex
 - [x] Batch generation / streaming — `generate_batched()`, `--batch-size`, progressive JSONL/YAML output
 - [x] Custom contexts — `register_context()`, `load_contexts_from_file()`, `--context-file` CLI option
 - [x] PyPI publish — `pip install testdata-ai` · `py.typed` marker for fully typed public API
+- [x] Locale / language support — `--locale pl` / `DataGenerator(locale="ja")` / `AI_LOCALE` env var; pytest plugin marker support
 
 **Next:**
 - [ ] SQL output format — `--output sql` / `-o sql` (INSERT statements, configurable table name)
 - [ ] `/docs` folder — installation, quickstart, CLI reference, API reference, custom contexts, pytest integration
 - [ ] Async API — `async def generate()` / `generate_batched()` for high-throughput pipelines
-- [ ] Locale / language support — generate data in non-English languages (`--locale pl`, `--locale ja`)
 - [ ] Schema-from-model — infer `ContextSchema` from a Pydantic model or JSON Schema dict
 - [ ] pandas output — `DataGenerator.to_dataframe()` convenience method
 - [ ] More providers — Google Gemini, Mistral, Cohere

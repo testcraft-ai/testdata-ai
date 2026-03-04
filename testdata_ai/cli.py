@@ -99,10 +99,15 @@ def _load_context_files(context_files, quiet: bool = False) -> None:
 @click.option(
     "-q", "--quiet", is_flag=True, help="Suppress status messages (only output data)."
 )
+@click.option(
+    "--locale",
+    default=None,
+    help="Locale/language for generated values (e.g. pl, ja, de). Overrides AI_LOCALE env var.",
+)
 @_context_file_option
 def generate(
     context, count, fmt, provider, model, max_tokens, temperature, no_validate, batch_size, quiet,
-    context_files,
+    locale, context_files,
 ):
     """Generate realistic test data using AI."""
     _load_context_files(context_files, quiet)
@@ -118,6 +123,7 @@ def generate(
             model=model,
             temperature=temperature,
             max_tokens=max_tokens,
+            locale=locale,
         )
     except (ValueError, ImportError) as e:
         raise click.ClickException(str(e))

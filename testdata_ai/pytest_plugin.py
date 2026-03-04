@@ -34,7 +34,7 @@ class _LazyGenerator:
     def __init__(self):
         self._generator = None
 
-    def generate(self, context, count):
+    def generate(self, context, count, locale=None):
         if self._generator is None:
             try:
                 from testdata_ai import DataGenerator
@@ -45,8 +45,13 @@ class _LazyGenerator:
                     "Set provider env vars (for example OPENAI_API_KEY) and install "
                     "provider dependencies (for example pip install testdata-ai[all])."
                 ) from exc
+        if locale is not None:
+            from testdata_ai import DataGenerator
+            gen = DataGenerator(locale=locale)
+        else:
+            gen = self._generator
         results = []
-        for batch in self._generator.generate_batched(context, count, self._BATCH_SIZE):
+        for batch in gen.generate_batched(context, count, self._BATCH_SIZE):
             results.extend(batch)
         return results
 
@@ -154,7 +159,7 @@ def pytest_configure(config):
 
     config.addinivalue_line(
         "markers",
-        "testdata(context, count=1): generate AI test data"
+        "testdata(context, count=1, locale=None): generate AI test data"
     )
 
     is_admin_run = (
@@ -269,8 +274,9 @@ def testdata(request):
         )
 
     count = marker.kwargs.get("count", 1)
+    locale = marker.kwargs.get("locale")
     try:
-        return cm.get_data(context, count)
+        return cm.get_data(context, count, locale=locale)
     except _PluginConfigError as exc:
         pytest.fail(str(exc))
 

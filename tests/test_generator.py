@@ -171,6 +171,14 @@ class TestDataGenerator:
         assert len(result) == 1
         assert result[0] == {"a": 1}
 
+    def test_generate_passes_locale_to_prompt(self, make_generator):
+        sample = CONTEXTS["ecommerce_customer"].sample
+        gen = make_generator(json.dumps({"data": [sample]}))
+        gen.locale = "pl"
+        with patch("testdata_ai.generator.get_prompt", wraps=__import__("testdata_ai.prompts", fromlist=["get_prompt"]).get_prompt) as mock_prompt:
+            gen.generate("ecommerce_customer", count=1, validate=False)
+        mock_prompt.assert_called_once_with("ecommerce_customer", 1, locale="pl")
+
 
 class TestGeneratorInit:
 
@@ -240,6 +248,33 @@ class TestGeneratorInit:
         assert gen.config.max_tokens == 8192
         assert mock_prov.max_tokens == 8192
 
+    def test_locale_stored_on_instance(self):
+        with patch("testdata_ai.generator.get_provider") as mock_get_prov:
+            mock_get_prov.return_value = MagicMock()
+            gen = DataGenerator(api_key="sk-test", provider="openai", locale="pl")
+        assert gen.locale == "pl"
+
+    def test_locale_defaults_to_none_without_env(self, monkeypatch):
+        monkeypatch.delenv("AI_LOCALE", raising=False)
+        with patch("testdata_ai.generator.get_provider") as mock_get_prov:
+            mock_get_prov.return_value = MagicMock()
+            gen = DataGenerator(api_key="sk-test", provider="openai")
+        assert gen.locale is None
+
+    def test_locale_reads_from_env(self, monkeypatch):
+        monkeypatch.setenv("AI_LOCALE", "ja")
+        with patch("testdata_ai.generator.get_provider") as mock_get_prov:
+            mock_get_prov.return_value = MagicMock()
+            gen = DataGenerator(api_key="sk-test", provider="openai")
+        assert gen.locale == "ja"
+
+    def test_explicit_locale_overrides_env(self, monkeypatch):
+        monkeypatch.setenv("AI_LOCALE", "de")
+        with patch("testdata_ai.generator.get_provider") as mock_get_prov:
+            mock_get_prov.return_value = MagicMock()
+            gen = DataGenerator(api_key="sk-test", provider="openai", locale="pl")
+        assert gen.locale == "pl"
+
 
 class TestGenerateConvenienceFunction:
 
@@ -253,7 +288,7 @@ class TestGenerateConvenienceFunction:
             result = generate("banking_user", count=1)
 
         assert result == [sample]
-        mock_cls.assert_called_once_with()
+        mock_cls.assert_called_once_with(locale=None)
         mock_instance.generate_batched.assert_called_once_with("banking_user", 1, 10, validate=True)
 
     def test_uses_default_count_of_10(self):
@@ -329,7 +364,7 @@ class TestGenerateBatched:
             gen = DataGenerator()
 
         with patch("testdata_ai.generator.get_prompt") as mock_prompt:
-            mock_prompt.side_effect = lambda _, n: f"generate {n}"
+            mock_prompt.side_effect = lambda _, n, locale=None: f"generate {n}"
             batches = list(gen.generate_batched("banking_user", count=25, batch_size=10, validate=False))
 
         assert len(batches) == 3
@@ -377,7 +412,7 @@ class TestGenerateBatched:
             gen = DataGenerator()
 
         with patch("testdata_ai.generator.get_prompt") as mock_prompt:
-            mock_prompt.side_effect = lambda _, n: f"generate {n}"
+            mock_prompt.side_effect = lambda _, n, locale=None: f"generate {n}"
             batches = list(gen.generate_batched("banking_user", count=20, batch_size=10, validate=False))
 
         assert mock_prov.generate.call_count == 2
@@ -440,7 +475,7 @@ class TestGenerateBatched:
             batches = list(generate_batched("banking_user", count=1, batch_size=10))
 
         assert batches == [[sample]]
-        mock_cls.assert_called_once_with()
+        mock_cls.assert_called_once_with(locale=None)
         mock_instance.generate_batched.assert_called_once_with("banking_user", 1, 10, validate=True)
 
     def test_module_level_generate_batched_validate_false(self):

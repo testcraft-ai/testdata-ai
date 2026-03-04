@@ -132,6 +132,23 @@ class TestGenerateCmd:
         assert isinstance(data, list)
         assert len(data) == 1
 
+    def test_generate_with_locale(self, runner):
+        sample = CONTEXTS["ecommerce_customer"].sample
+        with patch("testdata_ai.cli.DataGenerator") as mock_cls:
+            mock_gen = MagicMock()
+            mock_gen.generate_batched.return_value = iter([[sample]])
+            mock_gen.config = MagicMock(provider="openai", model="test-model", max_tokens=4096)
+            mock_gen.provider = MagicMock(max_tokens=4096)
+            mock_cls.return_value = mock_gen
+            result = runner.invoke(
+                cli,
+                ["generate", "--context", "ecommerce_customer", "--count", "1",
+                 "--locale", "pl", "-q"],
+            )
+        assert result.exit_code == 0
+        _, kwargs = mock_cls.call_args
+        assert kwargs.get("locale") == "pl"
+
     def test_generate_unknown_context_errors(self, runner):
         result = runner.invoke(
             cli, ["generate", "--context", "nonexistent", "-q"]

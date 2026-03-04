@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Locale / language support — generate data values in any language via `--locale <tag>` (CLI),
+  `DataGenerator(locale="pl")` (Python API), `generate(..., locale="ja")` (convenience functions),
+  `@pytest.mark.testdata(context=..., locale="de")` (pytest plugin)
+- `AI_LOCALE` environment variable sets a session-level default locale
+- Locale-aware cache key in `CacheManager` — data generated with different locales is cached separately
+
 ### Changed
 - README: marked PyPI publish as done, added CHANGELOG link
 

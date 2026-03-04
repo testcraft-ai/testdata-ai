@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from pathlib import Path
 import threading
 import logging
+from typing import Optional
 
 from filelock import FileLock
 
@@ -223,20 +224,22 @@ class CacheManager:
         self._save_seed()
         self._save_last_seeds()
 
-    def get_data(self, context: str, count: int):
+    def get_data(self, context: str, count: int, locale: Optional[str] = None):
+        cache_key = f"{context}:{locale}" if locale else context
         with self._lock:
-            existing = len(self._cache.get(context, []))
+            existing = len(self._cache.get(cache_key, []))
             if existing < count:
                 missing = count - existing
                 logger.info(
-                    f"Added {missing} missing records for {context} to cache"
+                    f"Added {missing} missing records for {cache_key} to cache"
                 )
                 new_data = self.generator.generate(
                     context=context,
-                    count=missing
+                    count=missing,
+                    locale=locale,
                 )
 
-                self._cache.setdefault(context, []).extend(new_data)
+                self._cache.setdefault(cache_key, []).extend(new_data)
                 self._save_seed()
-            data = self._cache[context][:count]
+            data = self._cache[cache_key][:count]
         return copy.deepcopy(data)

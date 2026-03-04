@@ -42,3 +42,18 @@ class TestGetPrompt:
     def test_every_context_produces_nonempty_prompt(self, context_name):
         prompt = get_prompt(context_name, 1)
         assert prompt
+
+    def test_locale_instruction_included(self):
+        prompt = get_prompt("ecommerce_customer", 3, locale="pl")
+        assert "'pl'" in prompt
+        assert "locale" in prompt.lower()
+        assert "English" in prompt
+
+    def test_no_locale_omits_instruction(self):
+        prompt = get_prompt("ecommerce_customer", 3)
+        assert "locale" not in prompt.lower()
+
+    @pytest.mark.parametrize("locale", ["pl", "ja", "de", "fr-FR"])
+    def test_locale_tag_appears_in_prompt(self, locale):
+        prompt = get_prompt("banking_user", 1, locale=locale)
+        assert f"'{locale}'" in prompt
