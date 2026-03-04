@@ -11,10 +11,6 @@ from logging.handlers import RotatingFileHandler
 
 import pytest
 
-from testdata_ai import DataGenerator
-from testdata_ai.contexts import list_contexts
-from testdata_ai.cache_manager import CacheManager
-
 
 DEFAULT_COUNT = 10
 _log_file_path = Path(".testdata_ai.log")
@@ -41,6 +37,7 @@ class _LazyGenerator:
     def generate(self, context, count):
         if self._generator is None:
             try:
+                from testdata_ai import DataGenerator
                 self._generator = DataGenerator()
             except Exception as exc:
                 raise _PluginConfigError(
@@ -98,6 +95,7 @@ def _build_context_fixtures_class():
     plain object instance. Using type() avoids introducing a top-level class
     that would need to be manually updated whenever contexts change.
     """
+    from testdata_ai.contexts import list_contexts
     attrs = {}
     for ctx_name in list_contexts():
         attrs[ctx_name] = _make_context_fixture(ctx_name, singular=True)
@@ -189,6 +187,7 @@ def pytest_configure(config):
                 "Pass --testdata-seed=<name> to share a single cache across all workers."
             )
 
+    from testdata_ai.cache_manager import CacheManager
     config._testdata_cache_manager = CacheManager(
         generator=_LazyGenerator(),
         seed=seed_label

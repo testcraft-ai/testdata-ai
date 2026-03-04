@@ -69,7 +69,7 @@ class TestPytestConfigure:
 
     def test_registers_testdata_marker(self):
         config = _make_config()
-        with patch.object(plugin_mod, "CacheManager"):
+        with patch("testdata_ai.cache_manager.CacheManager"):
             pytest_configure(config)
 
         config.addinivalue_line.assert_called_once_with(
@@ -79,7 +79,7 @@ class TestPytestConfigure:
 
     def test_creates_cache_manager_with_temp_seed_when_no_seed_given(self):
         config = _make_config()
-        with patch.object(plugin_mod, "CacheManager") as mock_cm:
+        with patch("testdata_ai.cache_manager.CacheManager") as mock_cm:
             pytest_configure(config)
 
         seed = mock_cm.call_args[1]["seed"]
@@ -88,15 +88,15 @@ class TestPytestConfigure:
 
     def test_creates_cache_manager_with_provided_seed(self):
         config = _make_config(**{"--testdata-seed": "my-seed"})
-        with patch.object(plugin_mod, "CacheManager") as mock_cm:
+        with patch("testdata_ai.cache_manager.CacheManager") as mock_cm:
             pytest_configure(config)
 
         assert mock_cm.call_args[1]["seed"] == "my-seed"
 
     def test_does_not_instantiate_generator_during_configure(self):
         config = _make_config()
-        with patch.object(plugin_mod, "DataGenerator") as mock_gen_cls, \
-             patch.object(plugin_mod, "CacheManager"):
+        with patch("testdata_ai.DataGenerator") as mock_gen_cls, \
+             patch("testdata_ai.cache_manager.CacheManager"):
             pytest_configure(config)
 
         mock_gen_cls.assert_not_called()
@@ -106,7 +106,7 @@ class TestPytestConfigure:
         cm = MagicMock()
         cm.load_last_seed.return_value = "recent-seed"
 
-        with patch.object(plugin_mod, "CacheManager", return_value=cm):
+        with patch("testdata_ai.cache_manager.CacheManager", return_value=cm):
             pytest_configure(config)
 
         cm.load_last_seed.assert_called_once()
@@ -117,7 +117,7 @@ class TestPytestConfigure:
         cm = MagicMock()
         cm.load_last_seed.return_value = None
 
-        with patch.object(plugin_mod, "CacheManager", return_value=cm):
+        with patch("testdata_ai.cache_manager.CacheManager", return_value=cm):
             pytest_configure(config)
 
         cm.load_last_seed.assert_called_once()
@@ -126,7 +126,7 @@ class TestPytestConfigure:
         config = _make_config(**{"--testdata-delete-seed": "old-seed"})
         cm = MagicMock()
 
-        with patch.object(plugin_mod, "CacheManager", return_value=cm), \
+        with patch("testdata_ai.cache_manager.CacheManager", return_value=cm), \
              patch.object(plugin_mod.pytest, "exit") as mock_exit:
             pytest_configure(config)
 
@@ -137,7 +137,7 @@ class TestPytestConfigure:
         config = _make_config(**{"--testdata-delete-last": True})
         cm = MagicMock()
 
-        with patch.object(plugin_mod, "CacheManager", return_value=cm), \
+        with patch("testdata_ai.cache_manager.CacheManager", return_value=cm), \
              patch.object(plugin_mod.pytest, "exit") as mock_exit:
             pytest_configure(config)
 
@@ -148,7 +148,7 @@ class TestPytestConfigure:
         config = _make_config(**{"--testdata-clear-cache": True})
         cm = MagicMock()
 
-        with patch.object(plugin_mod, "CacheManager", return_value=cm), \
+        with patch("testdata_ai.cache_manager.CacheManager", return_value=cm), \
              patch.object(plugin_mod.pytest, "exit") as mock_exit:
             pytest_configure(config)
 
@@ -159,7 +159,7 @@ class TestPytestConfigure:
         config = _make_config(**{"--testdata-show-cache": "seed-123"})
         cm = MagicMock()
 
-        with patch.object(plugin_mod, "CacheManager", return_value=cm), \
+        with patch("testdata_ai.cache_manager.CacheManager", return_value=cm), \
              patch.object(plugin_mod.pytest, "exit") as mock_exit:
             pytest_configure(config)
 
@@ -173,7 +173,7 @@ class TestPytestConfigure:
         cm = MagicMock()
         cm.seed = "active-seed"
 
-        with patch.object(plugin_mod, "CacheManager", return_value=cm), \
+        with patch("testdata_ai.cache_manager.CacheManager", return_value=cm), \
              patch.object(plugin_mod.pytest, "exit") as mock_exit:
             pytest_configure(config)
 
@@ -185,7 +185,7 @@ class TestPytestConfigure:
         cm = MagicMock()
         cm.list_seeds.return_value = ["s1", "s2"]
 
-        with patch.object(plugin_mod, "CacheManager", return_value=cm), \
+        with patch("testdata_ai.cache_manager.CacheManager", return_value=cm), \
              patch.object(plugin_mod.pytest, "exit") as mock_exit:
             pytest_configure(config)
 
@@ -197,7 +197,7 @@ class TestPytestConfigure:
         config = _make_config()
         cm = MagicMock()
 
-        with patch.object(plugin_mod, "CacheManager", return_value=cm), \
+        with patch("testdata_ai.cache_manager.CacheManager", return_value=cm), \
              patch.object(plugin_mod.pytest, "exit") as mock_exit:
             pytest_configure(config)
 
@@ -214,7 +214,7 @@ class TestPytestConfigure:
         cm = MagicMock()
         cm.seed = "my-seed"
 
-        with patch.object(plugin_mod, "CacheManager", return_value=cm):
+        with patch("testdata_ai.cache_manager.CacheManager", return_value=cm):
             pytest_configure(config)
 
         cm.add_to_last_seeds.assert_called_once_with("my-seed")
@@ -225,7 +225,7 @@ class TestPytestConfigure:
         cm = MagicMock()
         cm.seed = "TEMP-abc123"
 
-        with patch.object(plugin_mod, "CacheManager", return_value=cm):
+        with patch("testdata_ai.cache_manager.CacheManager", return_value=cm):
             pytest_configure(config)
 
         cm.add_to_last_seeds.assert_not_called()
@@ -241,7 +241,7 @@ class TestPytestConfigure:
         cm.load_last_seed.return_value = "old-seed"
         cm.seed = "old-seed"
 
-        with patch.object(plugin_mod, "CacheManager", return_value=cm):
+        with patch("testdata_ai.cache_manager.CacheManager", return_value=cm):
             pytest_configure(config)
 
         cm.add_to_last_seeds.assert_not_called()
@@ -387,7 +387,7 @@ class TestLazyGenerator:
 
     def test_initialization_is_deferred_until_generate_call(self):
         lazy = _LazyGenerator()
-        with patch.object(plugin_mod, "DataGenerator") as mock_gen_cls:
+        with patch("testdata_ai.DataGenerator") as mock_gen_cls:
             assert lazy._generator is None
             mock_gen_cls.assert_not_called()
 
@@ -395,7 +395,7 @@ class TestLazyGenerator:
         lazy = _LazyGenerator()
         real_gen = MagicMock()
         real_gen.generate_batched.return_value = [[{"id": 1}]]
-        with patch.object(plugin_mod, "DataGenerator", return_value=real_gen) as mock_gen_cls:
+        with patch("testdata_ai.DataGenerator", return_value=real_gen) as mock_gen_cls:
             first = lazy.generate("ecommerce_customer", 1)
             second = lazy.generate("ecommerce_customer", 1)
 
@@ -406,7 +406,7 @@ class TestLazyGenerator:
 
     def test_generate_raises_plugin_config_error_with_helpful_message(self):
         lazy = _LazyGenerator()
-        with patch.object(plugin_mod, "DataGenerator", side_effect=ValueError("bad env")):
+        with patch("testdata_ai.DataGenerator", side_effect=ValueError("bad env")):
             with pytest.raises(_PluginConfigError, match="OPENAI_API_KEY"):
                 lazy.generate("ecommerce_customer", 1)
 
@@ -419,7 +419,7 @@ class TestXdistSupport:
         its own isolated cache namespace."""
         config = _make_config()
         with patch.object(plugin_mod, "WORKER_ID", "gw3"), \
-             patch.object(plugin_mod, "CacheManager") as mock_cm:
+             patch("testdata_ai.cache_manager.CacheManager") as mock_cm:
             pytest_configure(config)
 
         seed = mock_cm.call_args[1]["seed"]
@@ -431,7 +431,7 @@ class TestXdistSupport:
         own AI calls."""
         config = _make_config()
         with patch.object(plugin_mod, "WORKER_ID", "gw0"), \
-             patch.object(plugin_mod, "CacheManager"), \
+             patch("testdata_ai.cache_manager.CacheManager"), \
              caplog.at_level(logging.WARNING, logger="testdata_ai"):
             pytest_configure(config)
 
@@ -444,7 +444,7 @@ class TestXdistSupport:
         cm = MagicMock()
         cm.seed = "shared-seed"
         with patch.object(plugin_mod, "WORKER_ID", "gw1"), \
-             patch.object(plugin_mod, "CacheManager", return_value=cm), \
+             patch("testdata_ai.cache_manager.CacheManager", return_value=cm), \
              caplog.at_level(logging.WARNING, logger="testdata_ai"):
             pytest_configure(config)
 
@@ -455,7 +455,7 @@ class TestXdistSupport:
         the xdist-isolation warning, even without a named seed."""
         config = _make_config()
         with patch.object(plugin_mod, "WORKER_ID", "master"), \
-             patch.object(plugin_mod, "CacheManager"), \
+             patch("testdata_ai.cache_manager.CacheManager"), \
              caplog.at_level(logging.WARNING, logger="testdata_ai"):
             pytest_configure(config)
 
@@ -646,7 +646,7 @@ class TestShowCacheOption:
     def _configure_with_show_cache(self, cm, show_cache_value):
         from _pytest.outcomes import Exit
         config = _make_config(**{"--testdata-show-cache": show_cache_value})
-        with patch.object(plugin_mod, "CacheManager", return_value=cm):
+        with patch("testdata_ai.cache_manager.CacheManager", return_value=cm):
             try:
                 pytest_configure(config)
             except Exit:

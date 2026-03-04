@@ -63,6 +63,12 @@ packages = ["testdata_ai"]
 [tool.setuptools.package-data]
 testdata_ai = ["py.typed"]
 
+[tool.coverage.run]
+source = ["testdata_ai"]
+
+[tool.coverage.report]
+show_missing = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = [

@@ -29,7 +29,9 @@ jobs:
           pip install -e ".[all,dev]"
 
       - name: Run tests with coverage
-        run: pytest -x --cov=testdata_ai --cov-report=xml
+        run: |
+          coverage run -m pytest -x
+          coverage xml
 
       - name: Upload coverage to Codecov
         if: matrix.python-version == '3.12'

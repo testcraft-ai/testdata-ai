@@ -47,8 +47,11 @@ class TestMainModule:
     def test_main_module_entry_point_via_runpy(self):
         """Cover __main__.py lines by executing it in-process with runpy."""
         import runpy
+        import testdata_ai
+        from pathlib import Path
+        main_path = str(Path(testdata_ai.__file__).parent / "__main__.py")
         with patch("testdata_ai.cli.cli") as mock_cli:
-            runpy.run_module("testdata_ai", run_name="__main__", alter_sys=True)
+            runpy.run_path(main_path, run_name="__main__")
         mock_cli.assert_called_once()
 
 
