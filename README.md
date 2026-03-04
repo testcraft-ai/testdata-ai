@@ -1,13 +1,43 @@
 # testdata-ai
 
-AI-powered test data generator for QA engineers.
+> Stop writing `test@test.com`. Generate realistic, context-aware test data with GPT-4, Claude, or a local Ollama model — in one command.
 
-Generate realistic, context-aware test data using GPT-4o, Claude, or a local Ollama model — because `test@test.com` and `John Doe` aren't cutting it anymore.
+[![CI](https://github.com/testcraft-ai/testdata-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/testcraft-ai/testdata-ai/actions/workflows/ci.yml)
+[![Coverage](https://codecov.io/gh/testcraft-ai/testdata-ai/branch/main/graph/badge.svg)](https://codecov.io/gh/testcraft-ai/testdata-ai)
+[![PyPI](https://img.shields.io/pypi/v/testdata-ai)](https://pypi.org/project/testdata-ai/)
+[![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://pypi.org/project/testdata-ai/)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-![PyPI](https://img.shields.io/pypi/v/testdata-ai)
-![Status](https://img.shields.io/badge/status-alpha-orange)
-![Python](https://img.shields.io/badge/python-3.9+-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
+---
+
+<p align="center">
+  <img src="demo/demo.gif" alt="testdata-ai CLI demo" width="720">
+</p>
+
+---
+
+```bash
+pip install "testdata-ai[openai]"
+testdata-ai generate --context ecommerce_customer --count 10
+```
+
+```python
+from testdata_ai import generate
+users = generate("ecommerce_customer", count=50)  # list of 50 realistic dicts
+```
+
+**Why testdata-ai?**
+
+- **13 built-in domains** — e-commerce, banking, healthcare, HR, IoT, travel, and more
+- **3 AI providers** — OpenAI, Anthropic, or a local Ollama model (no API cost)
+- **pytest plugin** — session-scoped fixtures with caching, named seeds, and xdist support, auto-loaded
+
+| | Faker | testdata-ai |
+|---|---|---|
+| Realistic emails | `test123@example.com` | `aisha.patel.2024@gmail.com` |
+| Cultural diversity | Limited | Names from many cultures |
+| Behavioral coherence | None | Age, location, and habits match |
+| Edge-case variety | Manual | AI generates it automatically |
 
 ---
 
@@ -20,7 +50,6 @@ Generate realistic, context-aware test data using GPT-4o, Claude, or a local Oll
 - [Custom Contexts](#custom-contexts)
 - [Pytest Plugin](#pytest-plugin)
 - [Available Contexts](#available-contexts)
-- [Why testdata-ai?](#why-testdata-ai)
 - [Development Roadmap](#development-roadmap)
 
 ---
@@ -584,36 +613,6 @@ The plugin writes structured logs to `.testdata_ai.log` (rotating, max 5 MB × 3
 | `logistics_shipment` | `logistics` | tracking_number, carrier, origin, destination, ship_date, estimated_delivery, actual_delivery, weight_kg, dimensions_cm, contents, status, last_checkpoint |
 
 Run `testdata-ai list-contexts` to see all contexts, or `testdata-ai show-context <name>` for full field details and a sample record.
-
----
-
-## Why testdata-ai?
-
-**Traditional approach (Faker):**
-
-```python
-user = {
-    "name": "John Doe",             # generic
-    "email": "test123@example.com", # obviously fake
-    "age": 42                       # random, no context
-}
-```
-
-**testdata-ai:**
-
-```python
-gen = DataGenerator()
-users = gen.generate("ecommerce_customer", count=50)
-# 50 unique, realistic, context-aware profiles in seconds
-```
-
-| | Faker | testdata-ai |
-|---|---|---|
-| Realistic emails | `test123@example.com` | `aisha.patel.2024@gmail.com` |
-| Cultural diversity | Limited | Names from many cultures |
-| Behavioral data | None | Shopping patterns, preferences |
-| Context awareness | No | Age matches behavior, location matches payment |
-| Edge cases | Manual | AI generates variety automatically |
 
 ---
 
