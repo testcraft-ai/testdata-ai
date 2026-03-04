@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- README: marked PyPI publish as done, added CHANGELOG link
+
+## [0.2.0] - 2026-03-04
+
+### Changed
+- Version bump for PyPI re-publish (0.1.0 release smoke-test)
+
 ## [0.1.0] - 2026-03-04
 
 ### Added
@@ -20,4 +30,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.env` / environment variable configuration per provider
 - `py.typed` marker — fully typed public API
 
+[Unreleased]: https://github.com/testcraft-ai/testdata-ai/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/testcraft-ai/testdata-ai/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/testcraft-ai/testdata-ai/releases/tag/v0.1.0
