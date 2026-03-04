@@ -20,7 +20,7 @@ for _env_var in ("AI_PROVIDER", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
 os.environ["AI_PROVIDER"] = "invalid-provider"
 
 sys.path.insert(0, {repo_root!r})
-pytest_plugins = ["testdata_ai.pytest_plugin"]
+# Plugin is auto-loaded via pytest11 entry point; no explicit registration needed.
 """
     )
 
