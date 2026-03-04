@@ -633,9 +633,9 @@ Run `testdata-ai list-contexts` to see all contexts, or `testdata-ai show-contex
 - [x] Rotating log file (`.testdata_ai.log`)
 - [x] Batch generation / streaming — `generate_batched()`, `--batch-size`, progressive JSONL/YAML output
 - [x] Custom contexts — `register_context()`, `load_contexts_from_file()`, `--context-file` CLI option
+- [x] PyPI publish — `pip install testdata-ai` · `py.typed` marker for fully typed public API
 
 **Next:**
-- [ ] PyPI publish — `pip install testdata-ai` (requires `python -m build` + `twine upload`)
 - [ ] SQL output format — `--output sql` / `-o sql` (INSERT statements, configurable table name)
 - [ ] `/docs` folder — installation, quickstart, CLI reference, API reference, custom contexts, pytest integration
 - [ ] Async API — `async def generate()` / `generate_batched()` for high-throughput pipelines
@@ -649,7 +649,7 @@ Run `testdata-ai list-contexts` to see all contexts, or `testdata-ai show-contex
 
 ## Contributing
 
-Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide. See [CHANGELOG.md](CHANGELOG.md) for version history.
 
 - Found a bug? [Open a bug report](https://github.com/testcraft-ai/testdata-ai/issues/new?template=bug_report.md)
 - Have an idea? [Open a feature request](https://github.com/testcraft-ai/testdata-ai/issues/new?template=feature_request.md)
