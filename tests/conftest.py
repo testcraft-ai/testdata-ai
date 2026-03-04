@@ -9,7 +9,7 @@ from testdata_ai.ai_providers import OpenAIProvider, AnthropicProvider, OllamaPr
 from testdata_ai.contexts import ContextSchema
 
 
-pytest_plugins = ["testdata_ai.pytest_plugin", "pytester"]
+pytest_plugins = ["pytester"]
 
 
 @pytest.fixture(autouse=True)
