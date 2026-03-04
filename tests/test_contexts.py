@@ -534,6 +534,22 @@ class TestLoadContextsFromFile:
         with pytest.raises(ValueError, match="duplicate key"):
             load_contexts_from_file(f)
 
+    def test_overwrite_builtin_warns(self, tmp_path, clean_contexts):
+        """load_contexts_from_file(..., overwrite=True) warns when a built-in is shadowed."""
+        pytest.importorskip("yaml")
+        import yaml
+        data = {
+            "ecommerce_customer": {
+                "description": "custom override",
+                "sample": {"id": "X"},
+                "prompt_hints": ["test"],
+            }
+        }
+        f = tmp_path / "override.yaml"
+        f.write_text(yaml.dump(data))
+        with pytest.warns(UserWarning, match="shadows a built-in"):
+            load_contexts_from_file(f, overwrite=True)
+
 
 class TestValidationError:
 

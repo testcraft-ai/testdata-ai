@@ -565,3 +565,49 @@ class TestOllamaProviderListModels:
         result = provider.list_models()
 
         assert result == []
+
+    def test_list_models_raises_on_request_error(self, ollama_provider_mock):
+        """Exception from urlopen in list_models() → _handle_api_error."""
+        import urllib.error
+        provider, mock_urllib = ollama_provider_mock
+        mock_urllib.urlopen.side_effect = Exception("network timeout")
+
+        with pytest.raises(RuntimeError):
+            provider.list_models()
+
+
+class TestOllamaProviderValidateModelErrors:
+    """Cover non-404 HTTP error and generic exception in _validate_model."""
+
+    def test_validate_model_non_404_http_error_raises(self, ollama_provider_mock):
+        """A 500 error during model validation should raise RuntimeError."""
+        import urllib.error
+        provider, mock_urllib = ollama_provider_mock
+        provider._model_validated = False
+        mock_urllib.urlopen.side_effect = urllib.error.HTTPError(
+            url=None, code=500, msg="Internal Server Error", hdrs={}, fp=None
+        )
+
+        with pytest.raises(RuntimeError, match="Ollama HTTP error 500"):
+            provider._validate_model()
+
+    def test_validate_model_generic_exception_raises(self, ollama_provider_mock):
+        """A generic exception during model validation should propagate."""
+        provider, mock_urllib = ollama_provider_mock
+        provider._model_validated = False
+        mock_urllib.urlopen.side_effect = Exception("connection reset")
+
+        with pytest.raises(RuntimeError):
+            provider._validate_model()
+
+
+class TestOllamaRetryExhausted:
+    """Cover the for-else branch when the retry loop completes without break."""
+
+    def test_else_branch_fires_when_range_is_empty(self, ollama_provider_mock):
+        """With _max_retries=-1, range(0) is empty, so the else clause runs."""
+        provider, mock_urllib = ollama_provider_mock
+        provider._max_retries = -1  # range(0) → loop body never executes
+
+        with pytest.raises(RuntimeError):
+            provider.generate("prompt")

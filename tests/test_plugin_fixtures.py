@@ -14,6 +14,8 @@ from testdata_ai.pytest_plugin import (
     _PluginConfigError,
     pytest_sessionfinish,
     DEFAULT_COUNT,
+    _get_cache_manager,
+    pytest_unconfigure,
 )
 
 
@@ -505,3 +507,192 @@ class TestPytestSessionfinish:
         pytest_sessionfinish(session, 0)
 
         cm.delete_seed.assert_called_once_with("TEMP-xyz789")
+
+
+# ---------------------------------------------------------------------------
+# pytest_sessionfinish — early return when seed_path doesn't exist (line 315)
+# ---------------------------------------------------------------------------
+
+class TestPytestSessionfinishEarlyReturn:
+
+    def test_skips_delete_when_seed_path_does_not_exist(self):
+        """If the TEMP seed file has already been removed, skip delete."""
+        session = MagicMock()
+        cm = MagicMock()
+        cm.seed = "TEMP-gone"
+        cm.seed_path.return_value = MagicMock(**{"exists.return_value": False})
+        session.config._testdata_cache_manager = cm
+
+        pytest_sessionfinish(session, 0)
+
+        cm.delete_seed.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# pytest_unconfigure (lines 328-334)
+# ---------------------------------------------------------------------------
+
+class TestPytestUnconfigure:
+
+    def test_finalizes_named_seed(self):
+        config = MagicMock()
+        cm = MagicMock()
+        cm.seed = "my-named-seed"
+        config._testdata_cache_manager = cm
+
+        pytest_unconfigure(config)
+
+        cm.finalize.assert_called_once()
+
+    def test_does_not_finalize_temp_seed(self):
+        config = MagicMock()
+        cm = MagicMock()
+        cm.seed = "TEMP-abc"
+        config._testdata_cache_manager = cm
+
+        pytest_unconfigure(config)
+
+        cm.finalize.assert_not_called()
+
+    def test_does_not_finalize_when_no_seed(self):
+        config = MagicMock()
+        cm = MagicMock()
+        cm.seed = None
+        config._testdata_cache_manager = cm
+
+        pytest_unconfigure(config)
+
+        cm.finalize.assert_not_called()
+
+    def test_finalize_error_is_logged_not_raised(self, caplog):
+        config = MagicMock()
+        cm = MagicMock()
+        cm.seed = "named-seed"
+        cm.finalize.side_effect = OSError("disk full")
+        config._testdata_cache_manager = cm
+
+        with caplog.at_level(logging.WARNING, logger="testdata_ai"):
+            pytest_unconfigure(config)
+
+        assert "could not finalize" in caplog.text
+
+    def test_no_cache_manager_is_noop(self):
+        config = MagicMock(spec=[])  # no _testdata_cache_manager attribute
+        pytest_unconfigure(config)  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# _get_cache_manager — pytest.fail when cm is None (line 243)
+# ---------------------------------------------------------------------------
+
+class TestGetCacheManager:
+
+    def test_raises_fail_when_cache_manager_not_set(self):
+        request = MagicMock()
+        request.config._testdata_cache_manager = None
+
+        with pytest.raises(pytest.fail.Exception, match="not initialized"):
+            _get_cache_manager(request)
+
+    def test_returns_cache_manager_when_set(self):
+        request = MagicMock()
+        cm = MagicMock()
+        request.config._testdata_cache_manager = cm
+
+        result = _get_cache_manager(request)
+        assert result is cm
+
+
+# ---------------------------------------------------------------------------
+# Log file setup failure (lines 87-88)
+# ---------------------------------------------------------------------------
+
+class TestLogFileSetupFailure:
+
+    def test_warns_when_log_file_cannot_be_created(self):
+        """_setup_logging() warns when the log file cannot be created.
+
+        The guard ``if logger.handlers: return`` prevents re-entry, so we
+        call _setup_logging() with a temporarily empty logger and capture
+        warnings via patch.object instead of caplog.
+        """
+        from testdata_ai.pytest_plugin import _setup_logging
+
+        original_handlers = list(plugin_mod.logger.handlers)
+        plugin_mod.logger.handlers.clear()
+        try:
+            with patch.object(plugin_mod.logger, "warning") as mock_warn, \
+                 patch("testdata_ai.pytest_plugin.RotatingFileHandler",
+                       side_effect=OSError("permission denied")):
+                _setup_logging()
+        finally:
+            plugin_mod.logger.handlers.clear()
+            plugin_mod.logger.handlers.extend(original_handlers)
+
+        assert mock_warn.called
+        assert "could not set up log file" in mock_warn.call_args[0][0]
+
+
+# ---------------------------------------------------------------------------
+# show-cache option coverage (lines 218-222, 228, 230, 234)
+# ---------------------------------------------------------------------------
+
+class TestShowCacheOption:
+
+    # pytest_configure() calls pytest.exit() when admin options are active,
+    # which raises _pytest.outcomes.Exit (not SystemExit).
+    from _pytest.outcomes import Exit as _PytestExit
+
+    def _configure_with_show_cache(self, cm, show_cache_value):
+        from _pytest.outcomes import Exit
+        config = _make_config(**{"--testdata-show-cache": show_cache_value})
+        with patch.object(plugin_mod, "CacheManager", return_value=cm):
+            try:
+                pytest_configure(config)
+            except Exit:
+                pass
+
+    def test_show_cache_current_with_no_active_seed_logs_message(self, caplog):
+        cm = MagicMock()
+        cm.seed = None
+        cm.show_cache.return_value = None
+
+        with caplog.at_level(logging.INFO, logger="testdata_ai"):
+            self._configure_with_show_cache(cm, "current")
+
+        assert any("No active seed" in r.message for r in caplog.records)
+
+    def test_show_cache_missing_file_logs_message(self, caplog):
+        cm = MagicMock()
+        cm.seed = "my-seed"
+        cm.show_cache.return_value = None  # None = file not found
+        cm.seed_path.return_value = MagicMock()
+
+        with caplog.at_level(logging.INFO, logger="testdata_ai"):
+            self._configure_with_show_cache(cm, "my-seed")
+
+        assert any("No cache file found" in r.message for r in caplog.records)
+
+    def test_show_cache_empty_file_logs_message(self, caplog):
+        cm = MagicMock()
+        cm.seed = "my-seed"
+        cm.show_cache.return_value = {}  # empty = file exists but no data
+        cm.seed_path.return_value = MagicMock()
+
+        with caplog.at_level(logging.INFO, logger="testdata_ai"):
+            self._configure_with_show_cache(cm, "my-seed")
+
+        assert any("empty" in r.message for r in caplog.records)
+
+    def test_show_cache_with_data_logs_context_counts(self, caplog):
+        cm = MagicMock()
+        cm.seed = "my-seed"
+        cm.show_cache.return_value = {"ecommerce_customer": 5, "banking_user": 3}
+        cm.seed_path.return_value = MagicMock()
+
+        with caplog.at_level(logging.INFO, logger="testdata_ai"):
+            self._configure_with_show_cache(cm, "my-seed")
+
+        log_text = " ".join(r.message for r in caplog.records)
+        assert "ecommerce_customer" in log_text
+        assert "5" in log_text

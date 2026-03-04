@@ -570,3 +570,135 @@ class TestContextFileCLI:
             result = runner.invoke(cli, ["list-contexts", "--context-file", str(f)])
         assert result.exit_code != 0
         assert "--context-file" in result.output
+
+
+# ---------------------------------------------------------------------------
+# list-models command
+# ---------------------------------------------------------------------------
+
+class TestListModelsCmd:
+
+    def _patch_gen_with_ollama(self, models):
+        """Return a patch where DataGenerator has an OllamaProvider."""
+        from testdata_ai.ai_providers import OllamaProvider
+        mock_gen = MagicMock()
+        mock_gen.config.provider = "ollama"
+        mock_gen.provider = MagicMock(spec=OllamaProvider)
+        mock_gen.provider.list_models.return_value = models
+        return patch("testdata_ai.cli.DataGenerator", return_value=mock_gen)
+
+    def _patch_gen_non_ollama(self):
+        """Return a patch where DataGenerator has a non-Ollama provider."""
+        mock_gen = MagicMock()
+        mock_gen.config.provider = "openai"
+        # provider is not an OllamaProvider instance
+        mock_gen.provider = MagicMock()
+        mock_gen.provider.__class__.__name__ = "OpenAIProvider"
+        return patch("testdata_ai.cli.DataGenerator", return_value=mock_gen)
+
+    def test_lists_available_models(self, runner):
+        with self._patch_gen_with_ollama(["llama3:8b", "qwen2.5:14b"]):
+            result = runner.invoke(cli, ["list-models"])
+        assert result.exit_code == 0
+        assert "llama3:8b" in result.output
+        assert "qwen2.5:14b" in result.output
+
+    def test_no_models_shows_pull_hint(self, runner):
+        with self._patch_gen_with_ollama([]):
+            result = runner.invoke(cli, ["list-models"])
+        assert result.exit_code == 0
+        assert "ollama pull" in result.output
+
+    def test_non_ollama_provider_shows_error(self, runner):
+        with self._patch_gen_non_ollama():
+            result = runner.invoke(cli, ["list-models"])
+        assert result.exit_code != 0
+        assert "list-models is only supported for Ollama" in result.output
+
+    def test_list_models_runtime_error(self, runner):
+        with self._patch_gen_with_ollama(None) as mock_cls:
+            mock_cls.return_value.provider.list_models.side_effect = RuntimeError("timeout")
+            result = runner.invoke(cli, ["list-models"])
+        assert result.exit_code != 0
+        assert "timeout" in result.output
+
+    def test_generator_init_error_shows_cli_error(self, runner):
+        with patch("testdata_ai.cli.DataGenerator", side_effect=ValueError("bad provider")):
+            result = runner.invoke(cli, ["list-models"])
+        assert result.exit_code != 0
+        assert "bad provider" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Spinner TTY paths
+# ---------------------------------------------------------------------------
+
+class TestSpinnerTTY:
+    """Cover the TTY (animated) code paths of _Spinner."""
+
+    import time as _time
+
+    def _tty_spinner(self, msg="test"):
+        spinner = _Spinner(msg, silent=False)
+        spinner._is_tty = True
+        return spinner
+
+    def test_tty_enter_starts_thread(self):
+        import time
+        spinner = self._tty_spinner()
+        with spinner:
+            assert spinner._thread is not None
+            assert spinner._thread.is_alive()
+            time.sleep(0.15)  # let _spin loop run at least once
+
+    def test_tty_exit_joins_thread_and_writes_done(self, capsys):
+        import time
+        spinner = self._tty_spinner("working")
+        with spinner:
+            time.sleep(0.15)
+        err = capsys.readouterr().err
+        assert "Done" in err
+
+    def test_tty_hidden_clears_line(self, capsys):
+        import time
+        spinner = self._tty_spinner("working")
+        flag = []
+        with spinner:
+            time.sleep(0.05)
+            with spinner.hidden():
+                flag.append("inside")
+        assert flag == ["inside"]
+
+    def test_tty_update_writes_non_tty_fallback_when_not_is_tty(self, capsys):
+        """update() on a non-TTY spinner writes to stderr directly."""
+        spinner = _Spinner("msg", silent=False)
+        # _is_tty is False (test env), update() calls stderr.write
+        with spinner:
+            spinner.update("new message")
+        err = capsys.readouterr().err
+        assert "new message" in err
+
+
+# ---------------------------------------------------------------------------
+# JSONL pretty-print (TTY mode)
+# ---------------------------------------------------------------------------
+
+class TestJsonlPrettyPrint:
+
+    def test_jsonl_pretty_indents_records(self):
+        """When stdout is a TTY, JSONL records are indented (pretty-printed)."""
+        import io
+        sample = CONTEXTS["banking_user"].sample
+        mock_gen = MagicMock()
+        mock_gen.generate_batched.return_value = iter([[sample]])
+        mock_gen.config = MagicMock(provider="openai", model="test-model")
+
+        buf = io.StringIO()
+        # Patch sys.stdout so isatty() returns True and output is captured
+        buf.isatty = lambda: True
+        with patch("sys.stdout", buf):
+            _run_streaming(mock_gen, "banking_user", 1, 10, "jsonl", False, True)
+
+        output = buf.getvalue()
+        # Pretty-printed JSON spans multiple lines (indent=2 adds newlines)
+        assert output.count("\n") > 1

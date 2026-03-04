@@ -36,13 +36,20 @@ class TestMainModule:
         assert "AI-powered test data generator" in result.output
 
     def test_main_module_runs_via_subprocess(self):
-        """Cover __main__.py by actually running it as a subprocess."""
+        """Smoke test via subprocess (does not count for in-process coverage)."""
         result = subprocess.run(
             [sys.executable, "-m", "testdata_ai", "--help"],
             capture_output=True, text=True, timeout=10,
         )
         assert result.returncode == 0
         assert "AI-powered test data generator" in result.stdout
+
+    def test_main_module_entry_point_via_runpy(self):
+        """Cover __main__.py lines by executing it in-process with runpy."""
+        import runpy
+        with patch("testdata_ai.cli.cli") as mock_cli:
+            runpy.run_module("testdata_ai", run_name="__main__", alter_sys=True)
+        mock_cli.assert_called_once()
 
 
 class TestPublicApi:

@@ -219,6 +219,27 @@ class TestGeneratorInit:
         mock_config.assert_called_once_with("anthropic")
         assert gen.config.provider == "anthropic"
 
+    def test_init_raises_on_temperature_out_of_range(self):
+        with patch("testdata_ai.generator.get_provider") as mock_get_prov:
+            mock_get_prov.return_value = MagicMock()
+            with pytest.raises(ValueError, match="temperature must be 0.0-1.0"):
+                DataGenerator(api_key="sk-test", provider="openai", temperature=1.5)
+
+    def test_init_accepts_explicit_max_tokens(self):
+        with patch("testdata_ai.generator.get_provider") as mock_get_prov:
+            mock_get_prov.return_value = MagicMock()
+            gen = DataGenerator(api_key="sk-test", provider="openai", max_tokens=2048)
+        assert gen.config.max_tokens == 2048
+
+    def test_set_max_tokens_updates_config_and_provider(self):
+        with patch("testdata_ai.generator.get_provider") as mock_get_prov:
+            mock_prov = MagicMock()
+            mock_get_prov.return_value = mock_prov
+            gen = DataGenerator(api_key="sk-test", provider="openai")
+        gen.set_max_tokens(8192)
+        assert gen.config.max_tokens == 8192
+        assert mock_prov.max_tokens == 8192
+
 
 class TestGenerateConvenienceFunction:
 
