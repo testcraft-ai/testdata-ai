@@ -304,7 +304,7 @@ Configuration (provider, model, etc.) is read from environment variables. For ex
 When you want to process or display records as they arrive rather than waiting for the full result:
 
 ```python
-from testdata_ai import generate_batched
+from testdata_ai.generator import generate_batched
 
 # Process records in batches of 10 as each batch completes
 for batch in generate_batched("ecommerce_customer", count=50, batch_size=10):
@@ -633,19 +633,27 @@ Run `testdata-ai list-contexts` to see all contexts, or `testdata-ai show-contex
 - [x] Rotating log file (`.testdata_ai.log`)
 - [x] Batch generation / streaming — `generate_batched()`, `--batch-size`, progressive JSONL/YAML output
 - [x] Custom contexts — `register_context()`, `load_contexts_from_file()`, `--context-file` CLI option
-- [ ] PyPI package (`pip install testdata-ai`)
 
 **Next:**
+- [ ] PyPI publish — `pip install testdata-ai` (requires `python -m build` + `twine upload`)
+- [ ] SQL output format — `--output sql` / `-o sql` (INSERT statements, configurable table name)
+- [ ] `/docs` folder — installation, quickstart, CLI reference, API reference, custom contexts, pytest integration
+- [ ] Async API — `async def generate()` / `generate_batched()` for high-throughput pipelines
+- [ ] Locale / language support — generate data in non-English languages (`--locale pl`, `--locale ja`)
+- [ ] Schema-from-model — infer `ContextSchema` from a Pydantic model or JSON Schema dict
+- [ ] pandas output — `DataGenerator.to_dataframe()` convenience method
+- [ ] More providers — Google Gemini, Mistral, Cohere
+- [ ] Relationship generation — `generate_with_relationships()` (e.g. customers + matching orders)
 
 ---
 
 ## Contributing
 
-Contributions welcome:
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
 
-- Found a bug? Open an issue
-- Have an idea? Start a discussion
-- Want to code? Fork and PR
+- Found a bug? [Open a bug report](https://github.com/testcraft-ai/testdata-ai/issues/new?template=bug_report.md)
+- Have an idea? [Open a feature request](https://github.com/testcraft-ai/testdata-ai/issues/new?template=feature_request.md)
+- Want to code? Fork, branch, and [open a PR](.github/PULL_REQUEST_TEMPLATE.md)
 
 ---
 
