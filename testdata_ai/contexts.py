@@ -8,16 +8,71 @@ Each context defines:
 - Prompt hints (requirements for realistic data generation)
 """
 
+import json
+import re
+import threading
+import warnings
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, Any, Optional, Union
+
 __all__ = [
     "ContextSchema",
     "ValidationError",
     "get_context_schema",
     "list_contexts",
     "validate_generated_data",
+    "register_context",
+    "load_contexts_from_file",
 ]
 
-from dataclasses import dataclass
-from typing import Dict, List, Any, Optional
+_VALID_CONTEXT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+_yaml_safe_no_dup_loader = None  # cached on first use; avoids a hard dep on PyYAML
+
+
+def _no_dup_construct_mapping(loader, node):
+    """YAML constructor that rejects duplicate mapping keys."""
+    loader.flatten_mapping(node)
+    pairs = loader.construct_pairs(node)
+    seen: set = set()
+    for key, _ in pairs:
+        if key in seen:
+            raise ValueError(f"duplicate key '{key}'")
+        seen.add(key)
+    return dict(pairs)
+
+
+def _get_yaml_safe_no_dup_loader():
+    """Return a cached yaml.SafeLoader subclass that rejects duplicate mapping keys."""
+    global _yaml_safe_no_dup_loader
+    if _yaml_safe_no_dup_loader is not None:
+        return _yaml_safe_no_dup_loader
+
+    import yaml  # noqa: PLC0415
+
+    class _NoDupLoader(yaml.SafeLoader):
+        pass
+
+    _NoDupLoader.add_constructor(
+        yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+        _no_dup_construct_mapping,
+    )
+    _yaml_safe_no_dup_loader = _NoDupLoader
+    return _NoDupLoader
+
+
+def _no_dup_json_pairs(pairs: list) -> dict:
+    """JSON object_pairs_hook that rejects duplicate keys."""
+    seen: set = set()
+    result: dict = {}
+    for key, value in pairs:
+        if key in seen:
+            raise ValueError(f"duplicate key '{key}'")
+        seen.add(key)
+        result[key] = value
+    return result
 
 
 class ValidationError(ValueError):
@@ -48,22 +103,66 @@ class ContextSchema:
     prompt_hints: List[str]
     category: str = "general"
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.description, str) or not self.description.strip():
+            raise ValueError("ContextSchema 'description' must be a non-empty string.")
+        if not isinstance(self.sample, dict) or not self.sample:
+            raise ValueError("ContextSchema 'sample' must be a non-empty dict.")
+        if not isinstance(self.prompt_hints, list):
+            raise ValueError("ContextSchema 'prompt_hints' must be a list.")
+
     @property
     def fields(self) -> List[str]:
-        """Required field names, derived from sample keys."""
+        """Required top-level field names, derived from sample keys."""
         return list(self.sample.keys())
 
     def validate_record(self, record: Dict[str, Any]) -> bool:
-        """Check if a record has all required fields."""
+        """Check if a record has all required fields.
+
+        For nested dicts in the sample, checks that the corresponding value
+        in *record* is also a dict containing all expected keys.
+        For nested lists, checks that the value is a list.
+        """
         if not isinstance(record, dict):
             return False
-        return all(f in record for f in self.fields)
+        for field, expected_val in self.sample.items():
+            if field not in record:
+                return False
+            actual_val = record[field]
+            if isinstance(expected_val, dict) and expected_val:
+                if not isinstance(actual_val, dict):
+                    return False
+                if not all(k in actual_val for k in expected_val):
+                    return False
+            elif isinstance(expected_val, list):
+                if not isinstance(actual_val, list):
+                    return False
+        return True
 
     def missing_fields(self, record: Dict[str, Any]) -> List[str]:
-        """Return list of required fields missing from a record."""
+        """Return list of required fields missing from a record.
+
+        Nested dict keys are reported as dotted paths (e.g. ``"stats.strength"``).
+        """
         if not isinstance(record, dict):
             return list(self.fields)
-        return [f for f in self.fields if f not in record]
+        missing: List[str] = []
+        for field, expected_val in self.sample.items():
+            if field not in record:
+                missing.append(field)
+                continue
+            actual_val = record[field]
+            if isinstance(expected_val, dict) and expected_val:
+                if not isinstance(actual_val, dict):
+                    missing.append(field)
+                else:
+                    for k in expected_val:
+                        if k not in actual_val:
+                            missing.append(f"{field}.{k}")
+            elif isinstance(expected_val, list):
+                if not isinstance(actual_val, list):
+                    missing.append(field)
+        return missing
 
 
 CONTEXTS: Dict[str, ContextSchema] = {
@@ -443,29 +542,261 @@ CONTEXTS: Dict[str, ContextSchema] = {
     ),
 }
 
+# User-registered custom contexts.  Never mutated by built-in definitions;
+# checked first by get_context_schema so custom entries can shadow built-ins.
+_CUSTOM_CONTEXTS: Dict[str, ContextSchema] = {}
+_CUSTOM_CONTEXTS_LOCK = threading.Lock()
+
+
+def _warn_quality_issues(name: str, schema: ContextSchema) -> None:
+    """Emit UserWarning for schema quality issues (empty hints, nested sample).
+
+    stacklevel=3 correctly attributes the warning to the caller of
+    register_context / load_contexts_from_file (i.e. user code), since the
+    call chain is: user → register_context/load_contexts_from_file →
+    _warn_quality_issues → warnings.warn.
+    """
+    if not schema.prompt_hints:
+        warnings.warn(
+            f"Context '{name}': 'prompt_hints' is empty; AI output quality will be poor. "
+            "Provide at least one hint.",
+            UserWarning,
+            stacklevel=3,
+        )
+
+
+def _dict_to_schema(name: str, d: Dict[str, Any]) -> ContextSchema:
+    """Convert a plain dict to a ContextSchema, checking for required keys.
+
+    Field-level validation (types, emptiness) is delegated to ``ContextSchema.__post_init__``.
+    """
+    missing = [k for k in ("description", "sample", "prompt_hints") if k not in d]
+    if missing:
+        raise ValueError(
+            f"Custom context '{name}' is missing required keys: {missing}. "
+            "Required: description, sample, prompt_hints. Optional: category."
+        )
+    return ContextSchema(
+        description=d["description"],
+        sample=d["sample"],
+        prompt_hints=d["prompt_hints"],
+        category=d.get("category", "custom"),
+    )
+
+
+def _validate_and_convert(
+    name: str,
+    schema: Union[ContextSchema, Dict[str, Any]],
+) -> ContextSchema:
+    """Validate *name* and convert *schema* to a ``ContextSchema``.
+
+    Only validates the name and schema type/structure.  Overwrite/collision
+    checks are the caller's responsibility so this helper stays pure.
+    """
+    if not _VALID_CONTEXT_NAME.match(name):
+        raise ValueError(
+            f"Invalid context name '{name}'. "
+            "Names must start with a letter or underscore and contain only letters, digits, or underscores."
+        )
+    if isinstance(schema, dict):
+        return _dict_to_schema(name, schema)
+    if not isinstance(schema, ContextSchema):
+        raise TypeError(
+            f"Context '{name}': schema must be a ContextSchema or dict, "
+            f"got {type(schema).__name__}."
+        )
+    return schema
+
+
+def register_context(
+    name: str,
+    schema: Union[ContextSchema, Dict[str, Any]],
+    *,
+    overwrite: bool = False,
+) -> None:
+    """Register a custom context schema at runtime.
+
+    Args:
+        name: Context identifier (snake_case recommended).
+        schema: A ``ContextSchema`` instance **or** a dict with keys
+                ``description``, ``sample``, ``prompt_hints``, and
+                optionally ``category`` (defaults to ``"custom"``).
+        overwrite: If ``True``, replace an existing context with the
+                   same name. Defaults to ``False``.
+
+    Raises:
+        ValueError: If *name* is already registered (when
+                    ``overwrite=False``) or if a dict *schema* is
+                    missing required keys.
+
+    Example::
+
+        from testdata_ai import register_context, ContextSchema
+
+        register_context("game_character", ContextSchema(
+            description="RPG game character profiles",
+            category="gaming",
+            sample={"name": "Theron", "class": "Ranger", "level": 15},
+            prompt_hints=["Fantasy names", "Level range 1-20"],
+        ))
+    """
+    validated = _validate_and_convert(name, schema)
+    shadowing_builtin = False
+    with _CUSTOM_CONTEXTS_LOCK:
+        if not overwrite and (name in CONTEXTS or name in _CUSTOM_CONTEXTS):
+            raise ValueError(
+                f"Context '{name}' is already registered. "
+                "Pass overwrite=True to replace it."
+            )
+        if overwrite and name in CONTEXTS:
+            shadowing_builtin = True
+        _CUSTOM_CONTEXTS[name] = validated
+    if shadowing_builtin:
+        warnings.warn(
+            f"register_context: '{name}' shadows a built-in context.",
+            UserWarning,
+            stacklevel=2,
+        )
+    _warn_quality_issues(name, validated)
+
+
+def load_contexts_from_file(
+    path: Union[str, Path],
+    *,
+    overwrite: bool = False,
+) -> List[str]:
+    """Load one or more custom contexts from a YAML or JSON file.
+
+    The file must be a top-level mapping where each key is a context
+    name and the value is a dict with ``description``, ``sample``,
+    ``prompt_hints``, and optionally ``category``.
+
+    YAML example::
+
+        game_character:
+          description: "RPG game character profiles"
+          category: "gaming"
+          sample:
+            name: "Theron Blackwood"
+            class: "Ranger"
+            level: 15
+          prompt_hints:
+            - "Fantasy names from diverse cultures"
+            - "Level range 1-20"
+
+    Args:
+        path: Path to a ``.yaml``, ``.yml``, or ``.json`` file.
+        overwrite: Passed through to :func:`register_context`.
+
+    Returns:
+        List of context names that were registered.
+
+    Raises:
+        ValueError: On unsupported file extension, malformed content,
+                    or missing required keys in a context definition.
+        FileNotFoundError: If *path* does not exist.
+        ImportError: If a ``.yaml``/``.yml`` file is given and PyYAML
+                     is not installed.
+    """
+    path = Path(path)
+    suffix = path.suffix.lower()
+
+    if suffix in (".yaml", ".yml"):
+        try:
+            import yaml  # noqa: PLC0415 — lazy import avoids hard dep at module level
+        except ImportError as exc:
+            raise ImportError(
+                "PyYAML is required to load YAML context files. "
+                "Install it with: pip install pyyaml"
+            ) from exc
+        try:
+            with path.open(encoding="utf-8") as fh:
+                data = yaml.load(fh, Loader=_get_yaml_safe_no_dup_loader())  # noqa: S506
+        except (yaml.YAMLError, ValueError) as exc:
+            raise ValueError(f"Malformed YAML in context file '{path}': {exc}") from exc
+    elif suffix == ".json":
+        try:
+            with path.open(encoding="utf-8") as fh:
+                data = json.load(fh, object_pairs_hook=_no_dup_json_pairs)
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise ValueError(f"Malformed JSON in context file '{path}': {exc}") from exc
+    else:
+        raise ValueError(
+            f"Unsupported file extension '{suffix}'. "
+            "Use .yaml, .yml, or .json."
+        )
+
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"Context file '{path}' must contain a top-level mapping "
+            "of {context_name: {description, sample, prompt_hints, ...}}."
+        )
+
+    # Validate all entries first (outside lock — pure schema validation, no shared state).
+    validated: List[tuple[str, ContextSchema]] = []
+    for ctx_name, ctx_def in data.items():
+        if not isinstance(ctx_def, dict):
+            raise ValueError(
+                f"Context file '{path}': entry '{ctx_name}' must be a mapping."
+            )
+        validated.append((ctx_name, _validate_and_convert(ctx_name, ctx_def)))
+
+    # Atomic collision check + registration under lock.
+    shadowing_builtins: List[str] = []
+    with _CUSTOM_CONTEXTS_LOCK:
+        for ctx_name, _ in validated:
+            if not overwrite and (ctx_name in CONTEXTS or ctx_name in _CUSTOM_CONTEXTS):
+                raise ValueError(
+                    f"Context '{ctx_name}' is already registered. "
+                    "Pass overwrite=True to replace it."
+                )
+            if overwrite and ctx_name in CONTEXTS:
+                shadowing_builtins.append(ctx_name)
+        for ctx_name, schema in validated:
+            _CUSTOM_CONTEXTS[ctx_name] = schema
+
+    for name in shadowing_builtins:
+        warnings.warn(
+            f"load_contexts_from_file: '{name}' shadows a built-in context.",
+            UserWarning,
+            stacklevel=2,
+        )
+    for ctx_name, schema in validated:
+        _warn_quality_issues(ctx_name, schema)
+
+    return [ctx_name for ctx_name, _ in validated]
+
 
 def get_context_schema(context: str) -> ContextSchema:
     """Get schema definition for a given context.
 
+    Custom contexts (registered via :func:`register_context` or
+    :func:`load_contexts_from_file`) take precedence over built-ins with
+    the same name.
+
     Raises:
         ValueError: If context is not recognized
     """
-    if context not in CONTEXTS:
-        available = list(CONTEXTS.keys())
-        raise ValueError(
-            f"Unknown context: '{context}'. Available contexts: {available}"
-        )
-    return CONTEXTS[context]
+    if context in _CUSTOM_CONTEXTS:
+        return _CUSTOM_CONTEXTS[context]
+    if context in CONTEXTS:
+        return CONTEXTS[context]
+    available = sorted({**CONTEXTS, **_CUSTOM_CONTEXTS})
+    raise ValueError(
+        f"Unknown context: '{context}'. Available contexts: {available}"
+    )
 
 
 def list_contexts(category: Optional[str] = None) -> List[str]:
-    """List available context names, optionally filtered by category."""
+    """List available context names, optionally filtered by category.
+
+    Custom contexts are included and, if they share a name with a built-in,
+    appear only once (custom version takes precedence).
+    """
+    merged = {**CONTEXTS, **_CUSTOM_CONTEXTS}
     if category is None:
-        return list(CONTEXTS.keys())
-    return [
-        name for name, schema in CONTEXTS.items()
-        if schema.category == category
-    ]
+        return list(merged.keys())
+    return [name for name, schema in merged.items() if schema.category == category]
 
 
 def validate_generated_data(

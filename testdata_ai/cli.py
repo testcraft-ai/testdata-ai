@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 import click
 
 from testdata_ai.ai_providers import OllamaProvider
-from testdata_ai.contexts import get_context_schema, list_contexts
+from testdata_ai.contexts import get_context_schema, list_contexts, load_contexts_from_file
 from testdata_ai.generator import DataGenerator
 
 
@@ -24,6 +24,32 @@ from testdata_ai.generator import DataGenerator
 @click.version_option(package_name="testdata-ai")
 def cli():
     """AI-powered test data generator for QA engineers."""
+
+
+_context_file_option = click.option(
+    "--context-file",
+    "context_files",
+    multiple=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="YAML/JSON file with custom context definitions (repeatable).",
+)
+
+
+def _load_context_files(context_files, quiet: bool = False) -> None:
+    """Load custom context definitions from a sequence of file paths.
+
+    Raises click.ClickException on any error so callers stay clean.
+    """
+    for path in context_files:
+        try:
+            names = load_contexts_from_file(path)
+        except (ValueError, ImportError, OSError) as e:
+            raise click.ClickException(f"--context-file: {e}")
+        if not quiet:
+            click.echo(
+                click.style(f"Loaded context(s) from {path}: {', '.join(names)}", fg="cyan"),
+                err=True,
+            )
 
 
 @cli.command()
@@ -73,10 +99,14 @@ def cli():
 @click.option(
     "-q", "--quiet", is_flag=True, help="Suppress status messages (only output data)."
 )
+@_context_file_option
 def generate(
-    context, count, fmt, provider, model, max_tokens, temperature, no_validate, batch_size, quiet
+    context, count, fmt, provider, model, max_tokens, temperature, no_validate, batch_size, quiet,
+    context_files,
 ):
     """Generate realistic test data using AI."""
+    _load_context_files(context_files, quiet)
+
     try:
         schema = get_context_schema(context)
     except ValueError as e:
@@ -179,8 +209,11 @@ def _report(records, count, current_max, quiet):
 
 @cli.command("list-contexts")
 @click.option("--category", default=None, help="Filter by category.")
-def list_contexts_cmd(category):
+@_context_file_option
+def list_contexts_cmd(category, context_files):
     """List all available data contexts."""
+    _load_context_files(context_files)
+
     names = list_contexts(category)
     if not names:
         click.echo("No contexts found.")
@@ -199,8 +232,11 @@ def list_contexts_cmd(category):
 
 @cli.command("show-context")
 @click.argument("context")
-def show_context(context):
+@_context_file_option
+def show_context(context, context_files):
     """Show details of a specific context."""
+    _load_context_files(context_files)
+
     try:
         schema = get_context_schema(context)
     except ValueError as e:

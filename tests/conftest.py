@@ -91,6 +91,18 @@ def mock_generator(max_tokens=4096):
     return gen
 
 
+@pytest.fixture()
+def clean_contexts():
+    """Restore _CUSTOM_CONTEXTS to its pre-test state after each test."""
+    import testdata_ai.contexts as _ctx_mod
+
+    original = dict(_ctx_mod._CUSTOM_CONTEXTS)
+    yield
+    with _ctx_mod._CUSTOM_CONTEXTS_LOCK:
+        _ctx_mod._CUSTOM_CONTEXTS.clear()
+        _ctx_mod._CUSTOM_CONTEXTS.update(original)
+
+
 @pytest.fixture
 def mock_context_schema():
     """Create a test ContextSchema for CLI tests."""

@@ -5,6 +5,8 @@ import io
 import json
 from unittest.mock import patch, MagicMock
 
+import pytest
+
 from testdata_ai.cli import cli, _flatten_dict, _records_to_csv, _adjust_max_tokens, _run_streaming, _Spinner
 from testdata_ai.contexts import CONTEXTS, ValidationError
 
@@ -482,3 +484,89 @@ class TestSpinner:
         with _Spinner("task", silent=False):
             pass
         assert "s)" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("clean_contexts")
+class TestContextFileCLI:
+    """Tests for --context-file option across generate, list-contexts, show-context."""
+
+    _CTX_DATA = {
+        "cli_test_ctx": {
+            "description": "CLI test context",
+            "category": "test",
+            "sample": {"id": "T-1", "label": "alpha"},
+            "prompt_hints": ["realistic labels"],
+        }
+    }
+
+    @pytest.fixture()
+    def yaml_ctx_file(self, tmp_path):
+        yaml = pytest.importorskip("yaml")
+        f = tmp_path / "ctx.yaml"
+        f.write_text(yaml.dump(self._CTX_DATA))
+        return str(f)
+
+    def test_list_contexts_shows_custom_context(self, runner, yaml_ctx_file):
+        result = runner.invoke(cli, ["list-contexts", "--context-file", yaml_ctx_file])
+        assert result.exit_code == 0, result.output
+        assert "cli_test_ctx" in result.output
+
+    def test_show_context_with_context_file(self, runner, yaml_ctx_file):
+        result = runner.invoke(cli, ["show-context", "cli_test_ctx", "--context-file", yaml_ctx_file])
+        assert result.exit_code == 0, result.output
+        assert "cli_test_ctx" in result.output
+        assert "Fields:" in result.output
+
+    def test_generate_with_context_file(self, runner, yaml_ctx_file):
+        sample = self._CTX_DATA["cli_test_ctx"]["sample"]
+        with _patch_generator([sample]):
+            result = runner.invoke(
+                cli,
+                ["generate", "--context", "cli_test_ctx", "--context-file", yaml_ctx_file, "--count", "1", "-q"],
+            )
+        assert result.exit_code == 0, result.output
+
+    def test_context_file_not_found_errors(self, runner):
+        result = runner.invoke(cli, ["list-contexts", "--context-file", "/no/such/file.yaml"])
+        assert result.exit_code != 0
+        assert "--context-file" in result.output
+
+    def test_context_file_invalid_content_errors(self, runner, tmp_path):
+        yaml = pytest.importorskip("yaml")
+        f = tmp_path / "bad.yaml"
+        f.write_text(yaml.dump(["not", "a", "mapping"]))
+        result = runner.invoke(cli, ["list-contexts", "--context-file", str(f)])
+        assert result.exit_code != 0
+        assert "--context-file" in result.output
+
+    def test_context_file_yaml_missing_pyyaml_shows_friendly_error(self, runner, tmp_path):
+        f = tmp_path / "ctx.yaml"
+        f.write_text("ctx_a:\n  description: d\n  sample:\n    x: 1\n  prompt_hints: []\n")
+        with patch.dict("sys.modules", {"yaml": None}):
+            result = runner.invoke(cli, ["list-contexts", "--context-file", str(f)])
+        assert result.exit_code != 0
+        assert "--context-file" in result.output
+
+    def test_malformed_yaml_shows_cli_error(self, runner, tmp_path):
+        pytest.importorskip("yaml")
+        f = tmp_path / "bad.yaml"
+        f.write_text("ctx_a: [unclosed")
+        result = runner.invoke(cli, ["list-contexts", "--context-file", str(f)])
+        assert result.exit_code != 0
+        assert "--context-file" in result.output
+
+    def test_duplicate_yaml_keys_shows_cli_error(self, runner, tmp_path):
+        pytest.importorskip("yaml")
+        f = tmp_path / "dup.yaml"
+        f.write_text("ctx_a:\n  description: first\nctx_a:\n  description: second\n")
+        result = runner.invoke(cli, ["list-contexts", "--context-file", str(f)])
+        assert result.exit_code != 0
+        assert "--context-file" in result.output
+
+    def test_oserror_shows_cli_error(self, runner, tmp_path):
+        f = tmp_path / "ctx.json"
+        f.write_text('{"ctx_x": {"description": "d", "sample": {"a": 1}, "prompt_hints": []}}')
+        with patch("testdata_ai.cli.load_contexts_from_file", side_effect=OSError("Permission denied")):
+            result = runner.invoke(cli, ["list-contexts", "--context-file", str(f)])
+        assert result.exit_code != 0
+        assert "--context-file" in result.output

@@ -1,0 +1,29 @@
+# Custom context definition — RPG game characters.
+# Load with:  testdata-ai generate --context game_character --context-file game_characters.yaml --count 5
+# Or in Python:  load_contexts_from_file("examples/game_characters.yaml")
+
+game_character:
+  description: "RPG game character profiles"
+  category: "gaming"
+  sample:
+    character_id: "CHAR-0042"
+    name: "Theron Blackwood"
+    class: "Ranger"
+    level: 15
+    stats:
+      strength: 14
+      dexterity: 18
+      intelligence: 12
+      constitution: 13
+    equipment:
+      - "Longbow +2"
+      - "Leather Armor"
+      - "Quiver of Arrows (20)"
+    guild: "Silver Arrows"
+    gold: 340
+  prompt_hints:
+    - "Fantasy names from diverse real-world cultures"
+    - "Classes: Warrior, Mage, Ranger, Rogue, Cleric, Paladin, Druid, Bard"
+    - "Level range 1-20; stats 8-20"
+    - "Equipment should match the class (e.g. Mage has staffs/robes, Warrior has swords/armor)"
+    - "Gold: 10-5000 depending on level"

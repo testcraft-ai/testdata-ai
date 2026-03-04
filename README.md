@@ -17,6 +17,7 @@ Generate realistic, context-aware test data using GPT-4o, Claude, or a local Oll
 - [Configuration](#configuration)
 - [CLI](#cli)
 - [Python API](#python-api)
+- [Custom Contexts](#custom-contexts)
 - [Pytest Plugin](#pytest-plugin)
 - [Available Contexts](#available-contexts)
 - [Why testdata-ai?](#why-testdata-ai)
@@ -98,6 +99,7 @@ testdata-ai generate --context <name> [OPTIONS]
 | `--max-tokens INTEGER` | from env | Max tokens per AI call (auto-adjusted to `batch-size` by default) |
 | `--temperature FLOAT` | from env | Sampling temperature `0.0–1.0` |
 | `--no-validate` | off | Skip schema validation |
+| `--context-file PATH` | — | YAML or JSON file with custom context definitions (repeatable) |
 | `-q, --quiet` | off | Suppress status messages (data only to stdout) |
 
 **Examples:**
@@ -126,6 +128,12 @@ testdata-ai generate --context iot_device --count 20 -q | jq '.[0]'
 
 # Use as Python module (same interface)
 python -m testdata_ai generate --context ecommerce_customer --count 5
+
+# Load a custom context from a YAML file and generate data for it
+testdata-ai generate --context game_character --context-file my_contexts.yaml --count 5
+
+# Quiet: suppress all status messages including the "Loaded context(s)..." line
+testdata-ai generate --context game_character --context-file my_contexts.yaml -q
 ```
 
 **Batch generation / streaming:** Large counts are split into multiple AI calls of `--batch-size` records each. Progress is reported per batch in stderr. With `-o jsonl`, records are written to stdout as each batch completes — output starts immediately rather than waiting for all records. With `-o yaml`, each batch is appended as it arrives. With `-o json` or `-o csv`, all records are accumulated and written at the end.
@@ -145,7 +153,7 @@ python -m testdata_ai generate --context ecommerce_customer --count 5
 List all available contexts.
 
 ```bash
-testdata-ai list-contexts [--category CATEGORY]
+testdata-ai list-contexts [--category CATEGORY] [--context-file PATH]...
 ```
 
 ```bash
@@ -155,6 +163,9 @@ testdata-ai list-contexts
 # Filter by category
 testdata-ai list-contexts --category finance
 testdata-ai list-contexts --category healthcare
+
+# Include custom contexts from a file
+testdata-ai list-contexts --context-file my_contexts.yaml
 ```
 
 ---
@@ -164,12 +175,15 @@ testdata-ai list-contexts --category healthcare
 Show full details of a context: fields, sample record, and prompt hints.
 
 ```bash
-testdata-ai show-context <context>
+testdata-ai show-context <context> [--context-file PATH]...
 ```
 
 ```bash
 testdata-ai show-context ecommerce_customer
 testdata-ai show-context logistics_shipment
+
+# Show a custom context defined in a file
+testdata-ai show-context game_character --context-file my_contexts.yaml
 ```
 
 ---
@@ -324,6 +338,106 @@ print(schema.prompt_hints) # list of generation hints
   "loyalty_tier": "silver"
 }
 ```
+
+---
+
+## Custom Contexts
+
+The 13 built-in contexts cover common domains, but you can define your own for any data shape your project needs.
+
+### File-based (YAML or JSON)
+
+Create a YAML file where each top-level key is a context name:
+
+```yaml
+# my_contexts.yaml
+game_character:
+  description: "RPG game character profiles"
+  category: "gaming"
+  sample:
+    character_id: "CHAR-0042"
+    name: "Theron Blackwood"
+    class: "Ranger"
+    level: 15
+    gold: 340
+  prompt_hints:
+    - "Fantasy names from diverse real-world cultures"
+    - "Classes: Warrior, Mage, Ranger, Rogue, Cleric, Paladin, Druid, Bard"
+    - "Level range 1-20; gold 10-5000 depending on level"
+```
+
+Load it with `--context-file` on any CLI command:
+
+```bash
+testdata-ai generate --context game_character --context-file my_contexts.yaml --count 5
+testdata-ai list-contexts --context-file my_contexts.yaml
+testdata-ai show-context game_character --context-file my_contexts.yaml
+```
+
+The flag is **repeatable** — pass multiple files to load several context collections at once.
+
+JSON files are also supported (same structure, `.json` extension).
+
+### Programmatic (`register_context`)
+
+Register contexts at runtime from Python — useful in `conftest.py` or application setup:
+
+```python
+from testdata_ai import register_context, ContextSchema
+
+# Using ContextSchema
+register_context("game_npc", ContextSchema(
+    description="RPG non-player character profiles",
+    category="gaming",
+    sample={
+        "npc_id": "NPC-0011",
+        "name": "Mira Dawnwhisper",
+        "role": "innkeeper",
+        "disposition": "friendly",
+        "gold": 80,
+    },
+    prompt_hints=[
+        "Fantasy names from diverse real-world cultures",
+        "Roles: innkeeper, blacksmith, guard, merchant, quest-giver",
+        "Gold: 10-500 depending on role",
+    ],
+))
+
+# Using a plain dict (no import of ContextSchema needed)
+register_context("game_item", {
+    "description": "RPG inventory items",
+    "category": "gaming",
+    "sample": {"item_id": "ITM-099", "name": "Elven Cloak", "rarity": "rare", "value_gold": 250},
+    "prompt_hints": ["Rarities: common, uncommon, rare, epic, legendary"],
+})
+```
+
+Both approaches register the context globally for the current process — `DataGenerator` and the pytest plugin pick it up immediately.
+
+### Loading from Python
+
+```python
+from testdata_ai import load_contexts_from_file
+
+names = load_contexts_from_file("my_contexts.yaml")  # returns ['game_character']
+```
+
+### Schema rules
+
+| Field | Required | Notes |
+|---|---|---|
+| `description` | yes | Non-empty string |
+| `sample` | yes | Non-empty dict; keys become the required field names |
+| `prompt_hints` | yes | List of strings (empty list is allowed but reduces output quality) |
+| `category` | no | Defaults to `"custom"` |
+
+**Name rules:** context names must start with a letter or underscore and contain only letters, digits, and underscores (`snake_case` recommended).
+
+**Warnings:** `register_context` and `load_contexts_from_file` emit a `UserWarning` when `prompt_hints` is empty or when the sample contains nested dicts/lists (nested types are not validated at runtime).
+
+**Overwriting:** pass `overwrite=True` to replace an existing context (including built-ins). A warning is emitted when a built-in is shadowed.
+
+**Atomicity:** if a file contains multiple contexts and one fails validation, none of them are registered.
 
 ---
 
@@ -519,10 +633,10 @@ users = gen.generate("ecommerce_customer", count=50)
 - [x] pytest-xdist support with shared named seeds
 - [x] Rotating log file (`.testdata_ai.log`)
 - [x] Batch generation / streaming — `generate_batched()`, `--batch-size`, progressive JSONL/YAML output
+- [x] Custom contexts — `register_context()`, `load_contexts_from_file()`, `--context-file` CLI option
 - [ ] PyPI package (`pip install testdata-ai`)
 
 **Next:**
-- [ ] Custom context definitions
 
 ---
 
