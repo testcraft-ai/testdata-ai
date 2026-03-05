@@ -681,6 +681,12 @@ Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the full gu
 
 ---
 
+## Related
+
+- [qa-ai-prompts](https://github.com/testcraft-ai/qa-ai-prompts) — 100+ battle-tested AI prompts for QA engineers. Copy, paste, customize — get results in seconds.
+
+---
+
 ## License
 
 MIT License — see [LICENSE](LICENSE)
