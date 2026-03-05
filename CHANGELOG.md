@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-03-05
+
+### Added
+- **Faker hybrid mode** — `ContextSchema` accepts an optional `field_providers` dict mapping field
+  names to `"faker:method_name"` specs; specified fields are overwritten with Faker-generated values
+  after AI generation, guaranteeing format correctness for critical fields (email, IBAN, phone, UUID…)
+- `testdata_ai/faker_bridge.py`: `apply_faker_fields(records, field_providers, locale)` — locale-aware
+  Faker integration; methods are resolved upfront (fail-fast) before any record is modified
+- `DataGenerator.generate()` applies `field_providers` automatically when set on the context schema
+- `DataGenerator.generate_from_model()` and module-level `generate_from_model()` accept a new
+  `field_providers` keyword argument
+- New optional dependency extra: `testdata-ai[faker]` (`faker>=18.0`); included in `[all]`
+- `examples/faker_hybrid.py` — usage demo for the new API
+
 ## [0.5.0] - 2026-03-05
 
 ### Fixed
@@ -62,7 +76,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.env` / environment variable configuration per provider
 - `py.typed` marker — fully typed public API
 
-[Unreleased]: https://github.com/testcraft-ai/testdata-ai/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/testcraft-ai/testdata-ai/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/testcraft-ai/testdata-ai/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/testcraft-ai/testdata-ai/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/testcraft-ai/testdata-ai/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/testcraft-ai/testdata-ai/compare/v0.2.0...v0.3.0
