@@ -152,6 +152,42 @@ class TestContextSchema:
         with pytest.raises(ValueError, match="'prompt_hints' must be a list"):
             ContextSchema(description="t", sample={"x": 1}, prompt_hints="hint")  # type: ignore[arg-type]
 
+    # --- field_providers validation ---
+
+    def test_field_providers_none_is_valid(self):
+        schema = ContextSchema(description="t", sample={"email": "x"}, prompt_hints=[], field_providers=None)
+        assert schema.field_providers is None
+
+    def test_field_providers_valid_spec(self):
+        schema = ContextSchema(
+            description="t",
+            sample={"email": "x", "phone": "y"},
+            prompt_hints=[],
+            field_providers={"email": "faker:email", "phone": "faker:phone_number"},
+        )
+        assert schema.field_providers == {"email": "faker:email", "phone": "faker:phone_number"}
+
+    def test_field_providers_bare_faker_raises(self):
+        with pytest.raises(ValueError, match="faker:method_name"):
+            ContextSchema(
+                description="t", sample={"email": "x"}, prompt_hints=[],
+                field_providers={"email": "faker"},
+            )
+
+    def test_field_providers_wrong_prefix_raises(self):
+        with pytest.raises(ValueError, match="faker:method_name"):
+            ContextSchema(
+                description="t", sample={"email": "x"}, prompt_hints=[],
+                field_providers={"email": "random:email"},
+            )
+
+    def test_field_providers_not_dict_raises(self):
+        with pytest.raises(ValueError, match="'field_providers' must be a dict"):
+            ContextSchema(
+                description="t", sample={"email": "x"}, prompt_hints=[],
+                field_providers="faker:email",  # type: ignore[arg-type]
+            )
+
 
 
 class TestBuiltinContexts:

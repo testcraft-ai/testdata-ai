@@ -43,6 +43,7 @@ orders = generate_from_model(Order, count=10)
 - **3 AI providers** — OpenAI, Anthropic, or a local Ollama model (no API cost)
 - **pytest plugin** — session-scoped fixtures with caching, named seeds, and xdist support, auto-loaded
 - **Pydantic / JSON Schema support** — generate data directly from your existing models
+- **Faker hybrid mode** — mark fields as `faker:email` / `faker:iban` to get format-guaranteed values while AI handles the semantic context
 
 | | Faker | testdata-ai |
 |---|---|---|
@@ -51,6 +52,7 @@ orders = generate_from_model(Order, count=10)
 | Behavioral coherence | None | Age, location, and habits match |
 | Edge-case variety | Manual | AI generates it automatically |
 | Use your own Pydantic model | Not possible | `generate_from_model(MyModel, count=10)` |
+| Format-safe critical fields | ✅ Faker's domain | `field_providers={"email": "faker:email"}` |
 
 ---
 
@@ -62,6 +64,7 @@ orders = generate_from_model(Order, count=10)
 - [Python API](#python-api)
   - [generate\_from\_model()](#generate_from_model--schema-from-pydantic--json-schema)
 - [Custom Contexts](#custom-contexts)
+- [Faker Hybrid Mode](#faker-hybrid-mode)
 - [Pytest Plugin](#pytest-plugin)
 - [Available Contexts](#available-contexts)
 - [Development Roadmap](#development-roadmap)
@@ -74,7 +77,8 @@ orders = generate_from_model(Order, count=10)
 pip install "testdata-ai[openai]"       # OpenAI only
 pip install "testdata-ai[anthropic]"    # Anthropic only
 pip install "testdata-ai[ollama]"       # Ollama only (no extra packages — uses stdlib)
-pip install "testdata-ai[all]"          # All providers
+pip install "testdata-ai[faker]"        # Faker hybrid mode (format-safe fields)
+pip install "testdata-ai[all]"          # All providers + Faker
 ```
 
 ### Development install (from source)
@@ -592,6 +596,81 @@ names = load_contexts_from_file("my_contexts.yaml")  # returns ['game_character'
 
 ---
 
+## Faker Hybrid Mode
+
+AI excels at semantic coherence — names, locations, and behaviors that feel like real people. Faker excels at format correctness — emails that pass regex checks, IBANs with valid checksums, UUIDs that are actually valid.
+
+Faker hybrid mode combines both: AI generates the full record, then Faker overwrites specific fields with guaranteed-valid values.
+
+```bash
+pip install "testdata-ai[faker]"
+```
+
+Add `field_providers` to any `ContextSchema`:
+
+```python
+from testdata_ai import register_context, ContextSchema, DataGenerator
+
+register_context("banking_pl", ContextSchema(
+    description="Polish retail banking customer",
+    sample={
+        "name": "Jan Kowalski",
+        "email": "jan.kowalski@bank.pl",
+        "iban": "PL61109010140000071219812874",
+        "phone": "+48 123 456 789",
+        "balance": 4250.00,
+    },
+    prompt_hints=["Realistic Polish names", "Balance 500–50000 PLN"],
+    field_providers={
+        "email": "faker:email",
+        "iban":  "faker:iban",
+        "phone": "faker:phone_number",
+    },
+))
+
+gen = DataGenerator(locale="pl_PL")
+records = gen.generate("banking_pl", count=10)
+# → AI generates name + balance (semantically coherent)
+# → Faker generates email + iban + phone (format guaranteed)
+```
+
+Works with `generate_from_model` too:
+
+```python
+from testdata_ai import generate_from_model
+
+data = generate_from_model(
+    Customer,
+    count=10,
+    field_providers={"email": "faker:email", "phone": "faker:phone_number"},
+)
+```
+
+**How it works:**
+1. AI generates the complete record (all fields, semantically coherent)
+2. Faker overwrites only the listed fields with format-guaranteed values
+3. Schema validation runs on the final combined record
+
+**Faker locale follows `DataGenerator.locale`** — `DataGenerator(locale="pl_PL")` gives Polish phone numbers and emails automatically.
+
+**Common providers:**
+
+| Spec | Example output |
+|------|----------------|
+| `faker:email` | `anna.kowalska@example.com` |
+| `faker:phone_number` | `+48 123 456 789` |
+| `faker:iban` | `PL61 1090 1014 0000 0712 1981 2874` |
+| `faker:uuid4` | `550e8400-e29b-41d4-a716-446655440000` |
+| `faker:url` | `https://example.com/path` |
+| `faker:ipv4` | `192.168.1.42` |
+| `faker:date` | `2024-03-15` |
+| `faker:postcode` | `00-001` |
+| `faker:company` | `Kowalski & Synowie Sp. z o.o.` |
+
+Full list: [faker.readthedocs.io → Providers](https://faker.readthedocs.io/en/master/providers.html)
+
+---
+
 ## Pytest Plugin
 
 The plugin ships with the package and is **auto-loaded via the `pytest11` entry point** — no import or conftest setup needed.
@@ -763,6 +842,7 @@ Run `testdata-ai list-contexts` to see all contexts, or `testdata-ai show-contex
 - [x] PyPI publish — `pip install testdata-ai` · `py.typed` marker for fully typed public API
 - [x] Locale / language support — `--locale pl` / `DataGenerator(locale="ja")` / `AI_LOCALE` env var; pytest plugin marker support
 - [x] Schema-from-model — `generate_from_model(MyPydanticModel)` / `generate_from_model(json_schema_dict)` / `--schema-file` CLI option
+- [x] Faker hybrid mode — `field_providers={"email": "faker:email"}` in `ContextSchema`; optional `testdata-ai[faker]` extra; locale-aware
 
 **Next:**
 - [ ] SQL output format — `--output sql` / `-o sql` (INSERT statements, configurable table name)

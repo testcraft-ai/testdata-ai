@@ -14,6 +14,7 @@ from testdata_ai.prompts import get_prompt, _build_prompt
 from testdata_ai.contexts import (
     validate_generated_data,
     ValidationError,
+    get_context_schema,
 )
 from testdata_ai.config import get_provider_config
 from testdata_ai.ai_providers import get_provider, AIProvider
@@ -133,6 +134,12 @@ class DataGenerator:
 
         response = _strip_markdown_fences(self.provider.generate(prompt))
         records = _parse_ai_response(response)
+
+        schema = get_context_schema(context)
+        if schema.field_providers:
+            from testdata_ai.faker_bridge import apply_faker_fields
+            records = apply_faker_fields(records, schema.field_providers, locale=self.locale)
+
         logger.info(f"Successfully generated {len(records)} records")
 
         if len(records) != count:
@@ -152,6 +159,7 @@ class DataGenerator:
         model_or_schema,
         count: int = 10,
         validate: bool = True,
+        field_providers: Optional[Dict[str, str]] = None,
     ) -> List[Dict[str, Any]]:
         """Generate test data from a Pydantic model class or JSON Schema dict.
 
@@ -179,6 +187,10 @@ class DataGenerator:
 
         response = _strip_markdown_fences(self.provider.generate(prompt))
         records = _parse_ai_response(response)
+
+        if field_providers:
+            from testdata_ai.faker_bridge import apply_faker_fields
+            records = apply_faker_fields(records, field_providers, locale=self.locale)
 
         logger.info(f"Successfully generated {len(records)} records")
 
@@ -299,6 +311,7 @@ def generate_from_model(
     count: int = 10,
     validate: bool = True,
     locale: Optional[str] = None,
+    field_providers: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     """Convenience function: generate test data from a Pydantic model or JSON Schema dict.
 
@@ -316,7 +329,9 @@ def generate_from_model(
         >>> schema = {"title": "Widget", "properties": {"name": {"type": "string"}}}
         >>> data = generate_from_model(schema, count=3)
     """
-    return DataGenerator(locale=locale).generate_from_model(model_or_schema, count, validate)
+    return DataGenerator(locale=locale).generate_from_model(
+        model_or_schema, count, validate, field_providers=field_providers
+    )
 
 
 def generate(

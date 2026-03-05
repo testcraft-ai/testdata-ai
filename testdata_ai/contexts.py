@@ -27,6 +27,7 @@ __all__ = [
 ]
 
 _VALID_CONTEXT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_FAKER_SPEC_RE = re.compile(r"^faker:[a-z_][a-z0-9_]*$")
 
 
 _yaml_safe_no_dup_loader = None  # cached on first use; avoids a hard dep on PyYAML
@@ -102,6 +103,7 @@ class ContextSchema:
     sample: Dict[str, Any]
     prompt_hints: List[str]
     category: str = "general"
+    field_providers: Optional[Dict[str, str]] = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.description, str) or not self.description.strip():
@@ -110,6 +112,14 @@ class ContextSchema:
             raise ValueError("ContextSchema 'sample' must be a non-empty dict.")
         if not isinstance(self.prompt_hints, list):
             raise ValueError("ContextSchema 'prompt_hints' must be a list.")
+        if self.field_providers is not None:
+            if not isinstance(self.field_providers, dict):
+                raise ValueError("ContextSchema 'field_providers' must be a dict or None.")
+            for key, value in self.field_providers.items():
+                if not isinstance(value, str) or not _FAKER_SPEC_RE.match(value):
+                    raise ValueError(
+                        f"field_providers[{key!r}] value must be 'faker:method_name', got {value!r}"
+                    )
 
     @property
     def fields(self) -> List[str]:

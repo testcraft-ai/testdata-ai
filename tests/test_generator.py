@@ -564,7 +564,7 @@ class TestGenerateFromModel:
 
         assert result == records
         mock_cls.assert_called_once_with(locale=None)
-        mock_instance.generate_from_model.assert_called_once_with(_FakeModel, 1, True)
+        mock_instance.generate_from_model.assert_called_once_with(_FakeModel, 1, True, field_providers=None)
 
     def test_module_level_passes_locale(self):
         with patch("testdata_ai.generator.DataGenerator") as mock_cls:
@@ -575,3 +575,106 @@ class TestGenerateFromModel:
             generate_from_model(_FakeModel, count=1, locale="pl")
 
         mock_cls.assert_called_once_with(locale="pl")
+
+    def test_generate_from_model_applies_field_providers(self, make_generator):
+        """field_providers overwrites specified fields after AI parsing."""
+        records = [{"name": "Alice", "age": 30, "email": "ai@gen.com"}]
+        gen = make_generator(json.dumps({"data": records}))
+
+        fake_instance = MagicMock()
+        fake_instance.email.return_value = "faker@example.com"
+        fake_cls = MagicMock(return_value=fake_instance)
+
+        with patch("testdata_ai.faker_bridge.Faker", fake_cls):
+            result = gen.generate_from_model(
+                _FakeModel,
+                count=1,
+                validate=False,
+                field_providers={"email": "faker:email"},
+            )
+
+        assert result[0]["email"] == "faker@example.com"
+        assert result[0]["name"] == "Alice"  # AI value preserved
+
+    def test_module_level_generate_from_model_passes_field_providers(self):
+        records = [{"name": "Bob", "age": 25}]
+        with patch("testdata_ai.generator.DataGenerator") as mock_cls:
+            mock_instance = MagicMock()
+            mock_instance.generate_from_model.return_value = records
+            mock_cls.return_value = mock_instance
+
+            fp = {"email": "faker:email"}
+            result = generate_from_model(_FakeModel, count=1, field_providers=fp)
+
+        assert result == records
+        mock_instance.generate_from_model.assert_called_once_with(
+            _FakeModel, 1, True, field_providers=fp
+        )
+
+
+class TestFakerHybridGenerate:
+    """Integration tests for Faker hybrid mode in DataGenerator.generate()."""
+
+    def test_generate_applies_field_providers_from_schema(self, make_generator):
+        """generate() overwrites fields declared in ContextSchema.field_providers."""
+        from testdata_ai.contexts import register_context, ContextSchema
+
+        sample = {"name": "Jan", "email": "jan@x.com"}
+        register_context(
+            "test_faker_ctx",
+            ContextSchema(
+                description="test context",
+                sample=sample,
+                prompt_hints=[],
+                field_providers={"email": "faker:email"},
+            ),
+            overwrite=True,
+        )
+
+        ai_response = json.dumps({"data": [{"name": "AI Name", "email": "ai@ai.com"}]})
+        gen = make_generator(ai_response)
+
+        fake_instance = MagicMock()
+        fake_instance.email.return_value = "faker@example.com"
+        fake_cls = MagicMock(return_value=fake_instance)
+
+        with patch("testdata_ai.faker_bridge.Faker", fake_cls):
+            result = gen.generate("test_faker_ctx", count=1, validate=False)
+
+        assert result[0]["email"] == "faker@example.com"
+        assert result[0]["name"] == "AI Name"
+
+    def test_generate_no_field_providers_unchanged(self, make_generator):
+        """generate() without field_providers leaves AI output untouched."""
+        sample = CONTEXTS["banking_user"].sample
+        gen = make_generator(json.dumps({"data": [sample]}))
+        result = gen.generate("banking_user", count=1)
+        assert result[0]["name"] == sample["name"]
+
+    def test_generate_passes_locale_to_faker(self, make_generator):
+        """Faker is initialized with DataGenerator.locale."""
+        from testdata_ai.contexts import register_context, ContextSchema
+
+        register_context(
+            "test_faker_locale_ctx",
+            ContextSchema(
+                description="locale test",
+                sample={"phone": "000"},
+                prompt_hints=[],
+                field_providers={"phone": "faker:phone_number"},
+            ),
+            overwrite=True,
+        )
+
+        ai_response = json.dumps({"data": [{"phone": "000"}]})
+        gen = make_generator(ai_response)
+        gen.locale = "pl_PL"
+
+        fake_instance = MagicMock()
+        fake_instance.phone_number.return_value = "+48 123 456 789"
+        fake_cls = MagicMock(return_value=fake_instance)
+
+        with patch("testdata_ai.faker_bridge.Faker", fake_cls):
+            gen.generate("test_faker_locale_ctx", count=1, validate=False)
+
+        fake_cls.assert_called_once_with("pl_PL")
