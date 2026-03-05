@@ -124,6 +124,12 @@ def generate(
 
     _load_context_files(context_files, quiet)
 
+    if context:
+        try:
+            schema = get_context_schema(context)
+        except ValueError as e:
+            raise click.ClickException(str(e))
+
     try:
         gen = DataGenerator(
             provider=provider,
@@ -138,11 +144,6 @@ def generate(
     if schema_file:
         _run_schema_file(gen, schema_file, count, fmt, no_validate, quiet, max_tokens)
         return
-
-    try:
-        schema = get_context_schema(context)
-    except ValueError as e:
-        raise click.ClickException(str(e))
 
     _adjust_max_tokens(gen, schema, min(count, batch_size), quiet, user_set=max_tokens is not None)
 
