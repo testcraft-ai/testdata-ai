@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-03-05
+
+### Added
+- `schema_adapter.py`: `model_to_context_schema()` — converts Pydantic v1/v2 model classes or
+  JSON Schema dicts to `ContextSchema` (resolves `$ref`, `anyOf`/`oneOf`, enums, format hints,
+  numeric/string constraints)
+- `DataGenerator.generate_from_model(model_or_schema, count, validate)` — generate test data
+  directly from a Pydantic model or JSON Schema dict without writing a `ContextSchema` by hand
+- Module-level `generate_from_model()` convenience function (exported from `testdata_ai`)
+- CLI: `--schema-file PATH` option on `generate` — accepts JSON/YAML files with a JSON Schema
+  definition; `--context` is now optional and mutually exclusive with `--schema-file`
+- `examples/generate_from_model.py` — usage demo for the new API
+
+### Changed
+- `prompts.py`: extracted `_build_prompt()` internal helper; `get_prompt()` delegates to it
+- `generator.py`: extracted `_parse_ai_response()` helper (shared by `generate` and `generate_from_model`)
+
 ## [0.3.0] - 2026-03-04
 
 ### Added
@@ -39,7 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.env` / environment variable configuration per provider
 - `py.typed` marker — fully typed public API
 
-[Unreleased]: https://github.com/testcraft-ai/testdata-ai/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/testcraft-ai/testdata-ai/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/testcraft-ai/testdata-ai/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/testcraft-ai/testdata-ai/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/testcraft-ai/testdata-ai/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/testcraft-ai/testdata-ai/releases/tag/v0.1.0
