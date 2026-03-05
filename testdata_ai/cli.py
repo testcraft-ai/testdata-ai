@@ -18,6 +18,7 @@ import click
 from testdata_ai.ai_providers import OllamaProvider
 from testdata_ai.contexts import get_context_schema, list_contexts, load_contexts_from_file
 from testdata_ai.generator import DataGenerator
+from testdata_ai.schema_adapter import model_to_context_schema
 
 
 @click.group()
@@ -55,8 +56,14 @@ def _load_context_files(context_files, quiet: bool = False) -> None:
 @cli.command()
 @click.option(
     "--context",
-    required=True,
+    default=None,
     help="Context name (e.g. ecommerce_customer, banking_user, saas_trial).",
+)
+@click.option(
+    "--schema-file",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="JSON or YAML file with a JSON Schema definition (alternative to --context).",
 )
 @click.option(
     "--count", default=10, show_default=True, help="Number of records to generate."
@@ -106,16 +113,16 @@ def _load_context_files(context_files, quiet: bool = False) -> None:
 )
 @_context_file_option
 def generate(
-    context, count, fmt, provider, model, max_tokens, temperature, no_validate, batch_size, quiet,
-    locale, context_files,
+    context, schema_file, count, fmt, provider, model, max_tokens, temperature, no_validate,
+    batch_size, quiet, locale, context_files,
 ):
     """Generate realistic test data using AI."""
-    _load_context_files(context_files, quiet)
+    if not context and not schema_file:
+        raise click.ClickException("Provide --context or --schema-file.")
+    if context and schema_file:
+        raise click.ClickException("--context and --schema-file are mutually exclusive.")
 
-    try:
-        schema = get_context_schema(context)
-    except ValueError as e:
-        raise click.ClickException(str(e))
+    _load_context_files(context_files, quiet)
 
     try:
         gen = DataGenerator(
@@ -128,10 +135,63 @@ def generate(
     except (ValueError, ImportError) as e:
         raise click.ClickException(str(e))
 
+    if schema_file:
+        _run_schema_file(gen, schema_file, count, fmt, no_validate, quiet, max_tokens)
+        return
+
+    try:
+        schema = get_context_schema(context)
+    except ValueError as e:
+        raise click.ClickException(str(e))
+
     _adjust_max_tokens(gen, schema, min(count, batch_size), quiet, user_set=max_tokens is not None)
 
     records = _run_streaming(gen, context, count, batch_size, fmt, no_validate, quiet)
     _report(records, count, gen.provider.max_tokens, quiet)
+
+
+def _run_schema_file(gen, schema_file, count, fmt, no_validate, quiet, max_tokens_user_set):
+    """Generate data from a JSON/YAML schema file using generate_from_model."""
+    try:
+        with open(schema_file) as f:
+            if schema_file.endswith((".yaml", ".yml")):
+                schema_dict = yaml.safe_load(f)
+            else:
+                schema_dict = json.load(f)
+    except (OSError, ValueError) as e:
+        raise click.ClickException(f"--schema-file: {e}")
+
+    try:
+        schema = model_to_context_schema(schema_dict)
+    except (TypeError, ValueError) as e:
+        raise click.ClickException(f"--schema-file: {e}")
+
+    _adjust_max_tokens(gen, schema, count, quiet, user_set=max_tokens_user_set is not None)
+
+    label = f"Generating {count} records from schema ({gen.config.provider}/{gen.config.model})"
+    try:
+        with _Spinner(label, silent=quiet):
+            records = gen.generate_from_model(schema_dict, count=count, validate=not no_validate)
+    except (ValueError, TypeError) as e:
+        raise click.ClickException(str(e))
+    except RuntimeError as e:
+        raise click.ClickException(f"API error: {e}")
+
+    _output_records(records, fmt)
+    _report(records, count, gen.provider.max_tokens, quiet)
+
+
+def _output_records(records: List[Dict[str, Any]], fmt: str) -> None:
+    """Write records to stdout in the requested format."""
+    if fmt == "json":
+        click.echo(json.dumps(records, indent=2))
+    elif fmt == "jsonl":
+        for record in records:
+            click.echo(json.dumps(record))
+    elif fmt == "yaml":
+        click.echo(yaml.dump(records, allow_unicode=True, sort_keys=False), nl=False)
+    elif fmt == "csv":
+        click.echo(_records_to_csv(records), nl=False)
 
 
 def _adjust_max_tokens(gen, context_schema, count, quiet, user_set):

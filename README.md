@@ -22,8 +22,19 @@ testdata-ai generate --context ecommerce_customer --count 10
 ```
 
 ```python
-from testdata_ai import generate
-users = generate("ecommerce_customer", count=50)  # list of 50 realistic dicts
+from testdata_ai import generate, generate_from_model
+from pydantic import BaseModel
+
+# Built-in context
+users = generate("ecommerce_customer", count=50)
+
+# Your own Pydantic model — no ContextSchema needed
+class Order(BaseModel):
+    customer_name: str
+    total: float
+    status: str
+
+orders = generate_from_model(Order, count=10)
 ```
 
 **Why testdata-ai?**
@@ -31,6 +42,7 @@ users = generate("ecommerce_customer", count=50)  # list of 50 realistic dicts
 - **13 built-in domains** — e-commerce, banking, healthcare, HR, IoT, travel, and more
 - **3 AI providers** — OpenAI, Anthropic, or a local Ollama model (no API cost)
 - **pytest plugin** — session-scoped fixtures with caching, named seeds, and xdist support, auto-loaded
+- **Pydantic / JSON Schema support** — generate data directly from your existing models
 
 | | Faker | testdata-ai |
 |---|---|---|
@@ -38,6 +50,7 @@ users = generate("ecommerce_customer", count=50)  # list of 50 realistic dicts
 | Cultural diversity | Limited | Names from many cultures |
 | Behavioral coherence | None | Age, location, and habits match |
 | Edge-case variety | Manual | AI generates it automatically |
+| Use your own Pydantic model | Not possible | `generate_from_model(MyModel, count=10)` |
 
 ---
 
@@ -47,6 +60,7 @@ users = generate("ecommerce_customer", count=50)  # list of 50 realistic dicts
 - [Configuration](#configuration)
 - [CLI](#cli)
 - [Python API](#python-api)
+  - [generate\_from\_model()](#generate_from_model--schema-from-pydantic--json-schema)
 - [Custom Contexts](#custom-contexts)
 - [Pytest Plugin](#pytest-plugin)
 - [Available Contexts](#available-contexts)
@@ -120,11 +134,13 @@ Generate test data records and output as JSON, JSONL, CSV, or YAML.
 
 ```bash
 testdata-ai generate --context <name> [OPTIONS]
+testdata-ai generate --schema-file <path> [OPTIONS]
 ```
 
 | Option | Default | Description |
 |---|---|---|
-| `--context TEXT` | (required) | Context name (see [Available Contexts](#available-contexts)) |
+| `--context TEXT` | — | Context name (see [Available Contexts](#available-contexts)). Mutually exclusive with `--schema-file` |
+| `--schema-file PATH` | — | JSON or YAML file containing a JSON Schema definition. Mutually exclusive with `--context` |
 | `--count INTEGER` | `10` | Number of records to generate |
 | `--batch-size INTEGER` | `10` | Records per AI call. For `count > batch-size`, records are output progressively |
 | `-o, --output [json\|jsonl\|csv\|yaml]` | `json` | Output format. Write to file via shell redirection: `-o csv > data.csv` |
@@ -175,6 +191,11 @@ testdata-ai generate --context game_character --context-file my_contexts.yaml --
 
 # Quiet: suppress all status messages including the "Loaded context(s)..." line
 testdata-ai generate --context game_character --context-file my_contexts.yaml -q
+
+# Generate from a JSON Schema file (no built-in context needed)
+testdata-ai generate --schema-file product_schema.json --count 10
+testdata-ai generate --schema-file order_schema.yaml --count 5 -o csv > orders.csv
+testdata-ai generate --schema-file ticket_schema.json --count 20 --locale pl
 ```
 
 **Batch generation / streaming:** Large counts are split into multiple AI calls of `--batch-size` records each. Progress is reported per batch in stderr. With `-o jsonl`, records are written to stdout as each batch completes — output starts immediately rather than waiting for all records. With `-o yaml`, each batch is appended as it arrives. With `-o json` or `-o csv`, all records are accumulated and written at the end.
@@ -338,6 +359,88 @@ for batch in gen.generate_batched("banking_user", count=100, batch_size=20):
 ```
 
 `generate_batched()` / `DataGenerator.generate_batched()` yield `List[Dict[str, Any]]` — one batch per iteration.
+
+---
+
+### `generate_from_model()` — Schema from Pydantic / JSON Schema
+
+If you already have Pydantic models, pass them directly — no need to write a `ContextSchema` by hand. The field names, types, descriptions, and constraints are extracted automatically and used to guide the AI.
+
+```python
+from pydantic import BaseModel, Field
+from testdata_ai import generate_from_model
+
+class Customer(BaseModel):
+    name: str
+    email: str = Field(description="Valid email address")
+    age: int = Field(ge=18, le=99, description="Age in years")
+    is_active: bool
+
+data = generate_from_model(Customer, count=10)
+# [{"name": "Aisha Patel", "email": "aisha@...", "age": 34, "is_active": True}, ...]
+```
+
+**Nested models** work too:
+
+```python
+class Address(BaseModel):
+    street: str
+    city: str
+    country: str
+
+class Order(BaseModel):
+    order_id: str
+    customer_name: str
+    total: float
+    shipping_address: Address
+
+data = generate_from_model(Order, count=5)
+```
+
+**Raw JSON Schema dict** — no Pydantic needed:
+
+```python
+schema = {
+    "title": "Product",
+    "properties": {
+        "sku":      {"type": "string"},
+        "name":     {"type": "string", "description": "Display name"},
+        "price":    {"type": "number", "minimum": 0},
+        "category": {"enum": ["electronics", "clothing", "food"]},
+        "in_stock": {"type": "boolean"},
+    },
+}
+data = generate_from_model(schema, count=5)
+```
+
+**All the usual options apply:**
+
+```python
+# Locale
+data = generate_from_model(Customer, count=5, locale="pl")
+
+# Skip validation (useful for models with many optional fields)
+data = generate_from_model(Customer, count=10, validate=False)
+
+# Via DataGenerator (reuse across multiple models)
+gen = DataGenerator(provider="anthropic")
+customers = gen.generate_from_model(Customer, count=5)
+orders    = gen.generate_from_model(Order, count=3)
+```
+
+**Inspect the derived schema without calling the AI:**
+
+```python
+from testdata_ai.schema_adapter import model_to_context_schema
+
+cs = model_to_context_schema(Customer)
+print(cs.description)    # "Auto-generated from Customer schema"
+print(cs.fields)         # ['name', 'email', 'age', 'is_active']
+print(cs.sample)         # {'name': 'example_name', 'email': 'user@example.com', ...}
+print(cs.prompt_hints)   # ['email: Valid email address', 'age: Age in years', 'age: min=18, max=99']
+```
+
+**Supported schema features:** `$ref` / `$defs`, `anyOf` / `oneOf` (null-safe), `enum`, `const`, string `format` (`email`, `date`, `date-time`, `uri`), numeric `minimum` / `maximum`, `minLength` / `maxLength`, nested objects and arrays, Pydantic v1 (`.schema()`) and v2 (`.model_json_schema()`). No new dependencies — Pydantic is detected by duck-typing.
 
 ---
 
@@ -659,12 +762,12 @@ Run `testdata-ai list-contexts` to see all contexts, or `testdata-ai show-contex
 - [x] Custom contexts — `register_context()`, `load_contexts_from_file()`, `--context-file` CLI option
 - [x] PyPI publish — `pip install testdata-ai` · `py.typed` marker for fully typed public API
 - [x] Locale / language support — `--locale pl` / `DataGenerator(locale="ja")` / `AI_LOCALE` env var; pytest plugin marker support
+- [x] Schema-from-model — `generate_from_model(MyPydanticModel)` / `generate_from_model(json_schema_dict)` / `--schema-file` CLI option
 
 **Next:**
 - [ ] SQL output format — `--output sql` / `-o sql` (INSERT statements, configurable table name)
 - [ ] `/docs` folder — installation, quickstart, CLI reference, API reference, custom contexts, pytest integration
 - [ ] Async API — `async def generate()` / `generate_batched()` for high-throughput pipelines
-- [ ] Schema-from-model — infer `ContextSchema` from a Pydantic model or JSON Schema dict
 - [ ] pandas output — `DataGenerator.to_dataframe()` convenience method
 - [ ] More providers — Google Gemini, Mistral, Cohere
 - [ ] Relationship generation — `generate_with_relationships()` (e.g. customers + matching orders)

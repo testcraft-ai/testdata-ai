@@ -10,27 +10,11 @@ __all__ = ["get_prompt"]
 import json
 from typing import Optional
 
-from testdata_ai.contexts import get_context_schema
+from testdata_ai.contexts import ContextSchema, get_context_schema
 
 
-def get_prompt(context: str, count: int, locale: Optional[str] = None) -> str:
-    """Build a prompt for the given context and record count.
-
-    Args:
-        context: Context identifier (e.g., 'ecommerce_customer')
-        count: Number of records to generate (must be >= 1)
-        locale: BCP 47 locale tag for generated values (e.g. 'pl', 'ja').
-            When None, no locale instruction is added and the AI produces
-            English data by default.
-
-    Returns:
-        Formatted prompt string ready to send to AI
-
-    Raises:
-        ValueError: If context is unknown
-    """
-    schema = get_context_schema(context)
-
+def _build_prompt(schema: ContextSchema, count: int, locale: Optional[str] = None) -> str:
+    """Build a prompt from a ContextSchema object."""
     hints = "\n".join(f"- {hint}" for hint in schema.prompt_hints)
     sample_json = json.dumps(schema.sample, indent=2)
 
@@ -54,3 +38,23 @@ def get_prompt(context: str, count: int, locale: Optional[str] = None) -> str:
         f"Each object in the array must follow this structure:\n"
         f"{sample_json}\n"
     )
+
+
+def get_prompt(context: str, count: int, locale: Optional[str] = None) -> str:
+    """Build a prompt for the given context and record count.
+
+    Args:
+        context: Context identifier (e.g., 'ecommerce_customer')
+        count: Number of records to generate (must be >= 1)
+        locale: BCP 47 locale tag for generated values (e.g. 'pl', 'ja').
+            When None, no locale instruction is added and the AI produces
+            English data by default.
+
+    Returns:
+        Formatted prompt string ready to send to AI
+
+    Raises:
+        ValueError: If context is unknown
+    """
+    schema = get_context_schema(context)
+    return _build_prompt(schema, count, locale)

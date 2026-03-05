@@ -3,20 +3,21 @@ Core test data generator - provider agnostic.
 Supports OpenAI, Anthropic, and other AI providers.
 """
 
-__all__ = ["DataGenerator", "generate", "generate_batched"]
+__all__ = ["DataGenerator", "generate", "generate_batched", "generate_from_model"]
 
 import json
 import os
 from typing import Dict, Iterator, List, Any, Optional
 import logging
 
-from testdata_ai.prompts import get_prompt
+from testdata_ai.prompts import get_prompt, _build_prompt
 from testdata_ai.contexts import (
     validate_generated_data,
     ValidationError,
 )
 from testdata_ai.config import get_provider_config
 from testdata_ai.ai_providers import get_provider, AIProvider
+from testdata_ai.schema_adapter import model_to_context_schema
 
 logger = logging.getLogger(__name__)
 
@@ -131,32 +132,7 @@ class DataGenerator:
         logger.debug(f"Sending prompt to {self.provider.__class__.__name__}")
 
         response = _strip_markdown_fences(self.provider.generate(prompt))
-
-        try:
-            data = json.loads(response)
-        except (json.JSONDecodeError, TypeError) as e:
-            logger.error(f"Failed to parse AI response as JSON: {e}")
-            logger.debug(f"Response preview: {response[:200]!r}")
-            raise ValueError(f"AI response is not valid JSON: {e}") from e
-
-        # Normalize to a list of records. The prompt asks for {"data": [...]};
-        # fall back to the first list of dicts found in the response values.
-        if isinstance(data, dict):
-            if isinstance(data.get("data"), list):
-                records = data["data"]
-            else:
-                for v in data.values():
-                    if isinstance(v, list) and v and isinstance(v[0], dict):
-                        records = v
-                        break
-                else:
-                    # Wrap the entire dict as a single record.
-                    records = [data]
-        elif isinstance(data, list):
-            records = data
-        else:
-            records = [data]
-
+        records = _parse_ai_response(response)
         logger.info(f"Successfully generated {len(records)} records")
 
         if len(records) != count:
@@ -166,6 +142,55 @@ class DataGenerator:
 
         if validate:
             invalid = validate_generated_data(context, records)
+            if invalid:
+                raise ValidationError(invalid)
+
+        return records
+
+    def generate_from_model(
+        self,
+        model_or_schema,
+        count: int = 10,
+        validate: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """Generate test data from a Pydantic model class or JSON Schema dict.
+
+        Args:
+            model_or_schema: A Pydantic model class (v1 or v2) or a JSON Schema dict.
+            count: Number of records to generate.
+            validate: Whether to validate generated records against the derived schema.
+
+        Returns:
+            List of generated data records as dictionaries.
+
+        Raises:
+            TypeError: If model_or_schema is not a Pydantic model or dict.
+            ValueError: If count < 1 or AI response is not valid JSON.
+            ValidationError: If generated records are missing required fields.
+        """
+        if count < 1:
+            raise ValueError(f"count must be >= 1, got {count}")
+
+        schema = model_to_context_schema(model_or_schema)
+        logger.info(f"Generating {count} records from schema: {schema.description}")
+
+        prompt = _build_prompt(schema, count, locale=self.locale)
+        logger.debug(f"Sending prompt to {self.provider.__class__.__name__}")
+
+        response = _strip_markdown_fences(self.provider.generate(prompt))
+        records = _parse_ai_response(response)
+
+        logger.info(f"Successfully generated {len(records)} records")
+
+        if len(records) != count:
+            logger.warning(f"Requested {count} records but received {len(records)}")
+
+        if validate:
+            invalid = [
+                {"record_index": i, "missing_fields": schema.missing_fields(r)}
+                for i, r in enumerate(records)
+                if not schema.validate_record(r)
+            ]
             if invalid:
                 raise ValidationError(invalid)
 
@@ -212,6 +237,29 @@ class DataGenerator:
             )
 
 
+def _parse_ai_response(raw: str) -> List[Dict[str, Any]]:
+    """Parse and normalize an AI JSON response to a list of records."""
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError) as e:
+        logger.error(f"Failed to parse AI response as JSON: {e}")
+        logger.debug(f"Response preview: {raw[:200]!r}")
+        raise ValueError(f"AI response is not valid JSON: {e}") from e
+
+    # Normalize to a list of records. The prompt asks for {"data": [...]};
+    # fall back to the first list of dicts found in the response values.
+    if isinstance(data, dict):
+        if isinstance(data.get("data"), list):
+            return data["data"]
+        for v in data.values():
+            if isinstance(v, list) and v and isinstance(v[0], dict):
+                return v
+        return [data]
+    if isinstance(data, list):
+        return data
+    return [data]
+
+
 def _strip_markdown_fences(text: str) -> str:
     """Remove markdown code fences that some AI providers wrap JSON in."""
     text = text.strip()
@@ -244,6 +292,31 @@ def generate_batched(
     """
     gen = DataGenerator(locale=locale)
     yield from gen.generate_batched(context, count, batch_size, validate=validate)
+
+
+def generate_from_model(
+    model_or_schema,
+    count: int = 10,
+    validate: bool = True,
+    locale: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Convenience function: generate test data from a Pydantic model or JSON Schema dict.
+
+    Creates a new DataGenerator each call. For repeated use, instantiate
+    DataGenerator directly and call generate_from_model() on it.
+
+    Example:
+        >>> from pydantic import BaseModel
+        >>> from testdata_ai import generate_from_model
+        >>> class Product(BaseModel):
+        ...     name: str
+        ...     price: float
+        >>> data = generate_from_model(Product, count=5)
+
+        >>> schema = {"title": "Widget", "properties": {"name": {"type": "string"}}}
+        >>> data = generate_from_model(schema, count=3)
+    """
+    return DataGenerator(locale=locale).generate_from_model(model_or_schema, count, validate)
 
 
 def generate(

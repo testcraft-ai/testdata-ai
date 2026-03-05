@@ -156,11 +156,19 @@ class TestGenerateCmd:
         assert result.exit_code != 0
         assert "Unknown context" in result.output
 
-    def test_generate_requires_context(self, runner):
+    def test_generate_requires_context_or_schema_file(self, runner):
         result = runner.invoke(cli, ["generate"])
         assert result.exit_code != 0
-        assert "Missing option" in result.output
-        assert "'--context'" in result.output
+        assert "--context or --schema-file" in result.output
+
+    def test_generate_context_and_schema_file_are_mutually_exclusive(self, runner, tmp_path):
+        schema_file = tmp_path / "s.json"
+        schema_file.write_text('{"properties": {"x": {"type": "string"}}}')
+        result = runner.invoke(
+            cli, ["generate", "--context", "ecommerce_customer", "--schema-file", str(schema_file)]
+        )
+        assert result.exit_code != 0
+        assert "mutually exclusive" in result.output
 
     def test_generate_no_validate_flag(self, runner):
         sample = CONTEXTS["banking_user"].sample
