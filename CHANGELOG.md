@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Test suite reorganised into subdirectories** — `tests/` now contains seven focused subdirectories
+  (`cli/`, `generator/`, `contexts/`, `plugin/`, `providers/`, `cache/`, `core/`) instead of one flat
+  file per module; shared fixtures moved to root `tests/conftest.py`
+
 ## [0.7.0] - 2026-03-06
 
 ### Added

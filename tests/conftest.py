@@ -7,6 +7,7 @@ from click.testing import CliRunner
 
 from testdata_ai.ai_providers import OpenAIProvider, AnthropicProvider, OllamaProvider
 from testdata_ai.contexts import ContextSchema
+from testdata_ai.generator import DataGenerator
 
 
 pytest_plugins = ["pytester"]
@@ -101,6 +102,32 @@ def clean_contexts():
     with _ctx_mod._CUSTOM_CONTEXTS_LOCK:
         _ctx_mod._CUSTOM_CONTEXTS.clear()
         _ctx_mod._CUSTOM_CONTEXTS.update(original)
+
+
+@pytest.fixture
+def make_generator():
+    """Create a DataGenerator with a mocked AI provider.
+
+    The patches are only active during __init__; the returned generator keeps
+    references to the mock provider, so calls to gen.generate() still use
+    the mock even after the patch context exits.
+    """
+    def _make(provider_response):
+        with patch("testdata_ai.generator.get_provider_config") as mock_config, \
+             patch("testdata_ai.generator.get_provider") as mock_get_prov:
+            mock_config.return_value = MagicMock(
+                provider="openai",
+                api_key="sk-fake",
+                model="test-model",
+                temperature=0.7,
+                max_tokens=4096,
+            )
+            mock_prov = MagicMock()
+            mock_prov.generate.return_value = provider_response
+            mock_get_prov.return_value = mock_prov
+            gen = DataGenerator()
+            return gen
+    return _make
 
 
 @pytest.fixture

@@ -1,6 +1,16 @@
 # testdata-ai
 
-> Stop writing `test@test.com`. Generate realistic, context-aware test data with GPT-4, Claude, or a local Ollama model — in one command.
+Most test data looks like this:
+
+```
+email="test@test.com"
+name="John Doe"
+age=30
+```
+
+This causes unrealistic tests and hides edge cases.
+
+testdata-ai generates realistic, culturally diverse, and behaviorally coherent data using modern LLMs. 
 
 [![CI](https://github.com/testcraft-ai/testdata-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/testcraft-ai/testdata-ai/actions/workflows/ci.yml)
 [![Coverage](https://codecov.io/gh/testcraft-ai/testdata-ai/branch/main/graph/badge.svg)](https://codecov.io/gh/testcraft-ai/testdata-ai)
@@ -14,7 +24,9 @@
   <img src="demo/demo.gif" alt="testdata-ai CLI demo" width="720">
 </p>
 
----
+
+## Quick start
+
 
 ```bash
 pip install "testdata-ai[openai]"
@@ -55,6 +67,27 @@ orders = generate_from_model(Order, count=10)
 | Use your own Pydantic model | Not possible | `generate_from_model(MyModel, count=10)` |
 | Format-safe critical fields | ✅ Faker's domain | `field_providers={"email": "faker:email"}` |
 | Unique values across records | Requires manual set tracking | `unique_fields=["email", "user_id"]` |
+
+**Why not just use Faker?**
+
+Faker is excellent for generating syntactically valid values
+(emails, UUIDs, phone numbers), but it lacks semantic coherence.
+
+Example Faker output:
+
+```
+name="John Smith"
+email="random42@example.com"
+country="Japan"
+```
+
+testdata-ai generates consistent records:
+
+```
+name="Yuki Tanaka"
+email="yuki.tanaka@gmail.com"
+country="Japan"
+```
 
 ---
 
