@@ -1,0 +1,49 @@
+# Context definitions with unique_fields.
+#
+# Load in Python:
+#   from testdata_ai import load_contexts_from_file
+#   load_contexts_from_file("examples/unique_contexts.yaml")
+#
+# Or via CLI:
+#   testdata-ai generate --context employee_unique \
+#       --context-file examples/unique_contexts.yaml --count 20
+
+employee_unique:
+  description: "HR employee record with guaranteed unique email"
+  category: "hr"
+  sample:
+    name: "Fatima Al-Rashid"
+    email: "f.alrashid@globecorp.com"
+    department: "Engineering"
+    job_title: "Senior Software Engineer"
+    hire_date: "2022-03-14"
+    salary: 125000
+  prompt_hints:
+    - "Diverse employee names from different cultures"
+    - "Departments: Engineering / Sales / Marketing / HR / Finance"
+    - "Salary should match role seniority (50k-250k USD)"
+    - "Hire dates within last 10 years"
+  field_providers:
+    email: "faker:email"
+  unique_fields:
+    - email
+
+healthcare_patient_unique:
+  description: "Healthcare patient with unique patient_id"
+  category: "healthcare"
+  sample:
+    patient_id: "PT-2024-00847"
+    name: "Elena Rodriguez"
+    date_of_birth: "1985-06-12"
+    blood_type: "A+"
+    primary_diagnosis: "Type 2 Diabetes"
+    insurance_provider: "Blue Cross Blue Shield"
+  prompt_hints:
+    - "Diverse patient names from different cultures"
+    - "Age range 0-100 (derive from date_of_birth)"
+    - "Blood types: A+, A-, B+, B-, AB+, AB-, O+, O-"
+    - "Common real-world diagnoses"
+  field_providers:
+    patient_id: "faker:uuid4"
+  unique_fields:
+    - patient_id

@@ -104,6 +104,7 @@ class ContextSchema:
     prompt_hints: List[str]
     category: str = "general"
     field_providers: Optional[Dict[str, str]] = None
+    unique_fields: Optional[List[str]] = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.description, str) or not self.description.strip():
@@ -120,6 +121,21 @@ class ContextSchema:
                     raise ValueError(
                         f"field_providers[{key!r}] value must be 'faker:method_name', got {value!r}"
                     )
+        if self.unique_fields is not None:
+            if not isinstance(self.unique_fields, list):
+                raise ValueError("ContextSchema 'unique_fields' must be a list or None.")
+            if self.field_providers is None:
+                raise ValueError(
+                    "ContextSchema 'unique_fields' requires 'field_providers' to be set. "
+                    f"Fields {self.unique_fields!r} have no Faker provider."
+                )
+            uncovered = [f for f in self.unique_fields if f not in self.field_providers]
+            if uncovered:
+                raise ValueError(
+                    f"ContextSchema 'unique_fields' contains fields not covered by "
+                    f"'field_providers': {uncovered}. "
+                    "Each unique field must have a corresponding 'faker:method' entry."
+                )
 
     @property
     def fields(self) -> List[str]:
@@ -591,6 +607,8 @@ def _dict_to_schema(name: str, d: Dict[str, Any]) -> ContextSchema:
         sample=d["sample"],
         prompt_hints=d["prompt_hints"],
         category=d.get("category", "custom"),
+        field_providers=d.get("field_providers"),
+        unique_fields=d.get("unique_fields"),
     )
 
 

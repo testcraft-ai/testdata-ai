@@ -138,7 +138,12 @@ class DataGenerator:
         schema = get_context_schema(context)
         if schema.field_providers:
             from testdata_ai.faker_bridge import apply_faker_fields
-            records = apply_faker_fields(records, schema.field_providers, locale=self.locale)
+            records = apply_faker_fields(
+                records,
+                schema.field_providers,
+                locale=self.locale,
+                unique_fields=schema.unique_fields,
+            )
 
         logger.info(f"Successfully generated {len(records)} records")
 
@@ -160,6 +165,7 @@ class DataGenerator:
         count: int = 10,
         validate: bool = True,
         field_providers: Optional[Dict[str, str]] = None,
+        unique_fields: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """Generate test data from a Pydantic model class or JSON Schema dict.
 
@@ -190,7 +196,12 @@ class DataGenerator:
 
         if field_providers:
             from testdata_ai.faker_bridge import apply_faker_fields
-            records = apply_faker_fields(records, field_providers, locale=self.locale)
+            records = apply_faker_fields(
+                records,
+                field_providers,
+                locale=self.locale,
+                unique_fields=unique_fields,
+            )
 
         logger.info(f"Successfully generated {len(records)} records")
 
@@ -312,6 +323,7 @@ def generate_from_model(
     validate: bool = True,
     locale: Optional[str] = None,
     field_providers: Optional[Dict[str, str]] = None,
+    unique_fields: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """Convenience function: generate test data from a Pydantic model or JSON Schema dict.
 
@@ -330,7 +342,9 @@ def generate_from_model(
         >>> data = generate_from_model(schema, count=3)
     """
     return DataGenerator(locale=locale).generate_from_model(
-        model_or_schema, count, validate, field_providers=field_providers
+        model_or_schema, count, validate,
+        field_providers=field_providers,
+        unique_fields=unique_fields,
     )
 
 

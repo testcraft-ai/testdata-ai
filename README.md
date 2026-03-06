@@ -44,6 +44,7 @@ orders = generate_from_model(Order, count=10)
 - **pytest plugin** — session-scoped fixtures with caching, named seeds, and xdist support, auto-loaded
 - **Pydantic / JSON Schema support** — generate data directly from your existing models
 - **Faker hybrid mode** — mark fields as `faker:email` / `faker:iban` to get format-guaranteed values while AI handles the semantic context
+- **Unique field constraints** — add `unique_fields=["email", "user_id"]` to any context and those fields will never duplicate within a batch
 
 | | Faker | testdata-ai |
 |---|---|---|
@@ -53,6 +54,7 @@ orders = generate_from_model(Order, count=10)
 | Edge-case variety | Manual | AI generates it automatically |
 | Use your own Pydantic model | Not possible | `generate_from_model(MyModel, count=10)` |
 | Format-safe critical fields | ✅ Faker's domain | `field_providers={"email": "faker:email"}` |
+| Unique values across records | Requires manual set tracking | `unique_fields=["email", "user_id"]` |
 
 ---
 
@@ -65,6 +67,7 @@ orders = generate_from_model(Order, count=10)
   - [generate\_from\_model()](#generate_from_model--schema-from-pydantic--json-schema)
 - [Custom Contexts](#custom-contexts)
 - [Faker Hybrid Mode](#faker-hybrid-mode)
+  - [Unique Field Constraints](#unique-field-constraints)
 - [Pytest Plugin](#pytest-plugin)
 - [Available Contexts](#available-contexts)
 - [Development Roadmap](#development-roadmap)
@@ -134,7 +137,7 @@ After installation, use the `testdata-ai` command (or `python -m testdata_ai`):
 
 ### `generate`
 
-Generate test data records and output as JSON, JSONL, CSV, or YAML.
+Generate test data records and output as JSON, JSONL, CSV, YAML, or SQL.
 
 ```bash
 testdata-ai generate --context <name> [OPTIONS]
@@ -147,7 +150,8 @@ testdata-ai generate --schema-file <path> [OPTIONS]
 | `--schema-file PATH` | — | JSON or YAML file containing a JSON Schema definition. Mutually exclusive with `--context` |
 | `--count INTEGER` | `10` | Number of records to generate |
 | `--batch-size INTEGER` | `10` | Records per AI call. For `count > batch-size`, records are output progressively |
-| `-o, --output [json\|jsonl\|csv\|yaml]` | `json` | Output format. Write to file via shell redirection: `-o csv > data.csv` |
+| `-o, --output [json\|jsonl\|csv\|yaml\|sql]` | `json` | Output format. Write to file via shell redirection: `-o csv > data.csv` |
+| `--table TEXT` | context name | Table name for SQL output |
 | `--provider TEXT` | from env | AI provider override (`openai` / `anthropic` / `ollama`) |
 | `--model TEXT` | from env | Model name override |
 | `--max-tokens INTEGER` | from env | Max tokens per AI call (auto-adjusted to `batch-size` by default) |
@@ -165,6 +169,12 @@ testdata-ai generate --context ecommerce_customer --count 10
 
 # 50 SaaS trial users saved as CSV
 testdata-ai generate --context saas_trial --count 50 -o csv > trials.csv
+
+# SQL INSERT statements for direct database seeding
+testdata-ai generate --context ecommerce_customer --count 100 -o sql > seed.sql
+
+# SQL with a custom table name
+testdata-ai generate --context banking_user --count 20 -o sql --table bank_accounts > accounts.sql
 
 # 100 records in batches of 20 — JSONL lines appear after each batch
 testdata-ai generate --context ecommerce_customer --count 100 --batch-size 20 -o jsonl
@@ -202,7 +212,7 @@ testdata-ai generate --schema-file order_schema.yaml --count 5 -o csv > orders.c
 testdata-ai generate --schema-file ticket_schema.json --count 20 --locale pl
 ```
 
-**Batch generation / streaming:** Large counts are split into multiple AI calls of `--batch-size` records each. Progress is reported per batch in stderr. With `-o jsonl`, records are written to stdout as each batch completes — output starts immediately rather than waiting for all records. With `-o yaml`, each batch is appended as it arrives. With `-o json` or `-o csv`, all records are accumulated and written at the end.
+**Batch generation / streaming:** Large counts are split into multiple AI calls of `--batch-size` records each. Progress is reported per batch in stderr. With `-o jsonl`, records are written to stdout as each batch completes — output starts immediately rather than waiting for all records. With `-o yaml`, each batch is appended as it arrives. With `-o json`, `-o csv`, or `-o sql`, all records are accumulated and written at the end.
 
 **Token auto-adjustment:** When `--max-tokens` is not set, the CLI estimates the required token budget **per batch** and automatically increases it if needed, printing a yellow notice to stderr.
 
@@ -211,6 +221,8 @@ testdata-ai generate --schema-file ticket_schema.json --count 20 --locale pl
 **JSONL output:** One JSON object per line — records appear progressively as batches complete.
 
 **YAML output:** Records are appended batch-by-batch as generation progresses.
+
+**SQL output:** Emits a `CREATE TABLE IF NOT EXISTS` DDL statement followed by `INSERT INTO` statements — compatible with SQLite and most major databases. Column types are inferred per field (`INTEGER`, `REAL`, `TEXT`). Nested dicts are flattened with underscore separators (e.g., `address_city`); lists are serialized as JSON strings. The table name defaults to the context name and can be overridden with `--table`.
 
 ---
 
@@ -585,6 +597,8 @@ names = load_contexts_from_file("my_contexts.yaml")  # returns ['game_character'
 | `sample` | yes | Non-empty dict; keys become the required field names |
 | `prompt_hints` | yes | List of strings (empty list is allowed but reduces output quality) |
 | `category` | no | Defaults to `"custom"` |
+| `field_providers` | no | Dict mapping field name → `"faker:method_name"`. Requires `pip install testdata-ai[faker]` |
+| `unique_fields` | no | List of field names (must be a subset of `field_providers` keys) that will be unique within a batch |
 
 **Name rules:** context names must start with a letter or underscore and contain only letters, digits, and underscores (`snake_case` recommended).
 
@@ -668,6 +682,83 @@ data = generate_from_model(
 | `faker:company` | `Kowalski & Synowie Sp. z o.o.` |
 
 Full list: [faker.readthedocs.io → Providers](https://faker.readthedocs.io/en/master/providers.html)
+
+---
+
+### Unique Field Constraints
+
+`unique_fields` works with **any field backed by a Faker method** — emails, UUIDs, usernames, phone numbers, IBANs, IP addresses, and more. Add it to any `ContextSchema` to guarantee no duplicates within a generated batch:
+
+```python
+register_context("saas_user", ContextSchema(
+    description="SaaS trial user",
+    sample={
+        "name": "Alice Chen",
+        "email": "alice@startup.io",
+        "company": "Acme Inc",
+        "plan": "trial",
+    },
+    prompt_hints=["Diverse professional names", "Plans: trial / starter / pro / enterprise"],
+    field_providers={
+        "email": "faker:email",
+    },
+    unique_fields=["email"],   # no duplicate emails in the batch
+))
+
+gen = DataGenerator()
+records = gen.generate("saas_user", count=100)
+emails = [r["email"] for r in records]
+assert len(emails) == len(set(emails))  # always passes
+```
+
+Multiple unique fields at once:
+
+```python
+register_context("order", ContextSchema(
+    ...,
+    field_providers={
+        "order_id": "faker:uuid4",
+        "customer_email": "faker:email",
+    },
+    unique_fields=["order_id", "customer_email"],
+))
+```
+
+Works with `generate_from_model` too:
+
+```python
+records = generate_from_model(
+    UserSchema,
+    count=50,
+    field_providers={"user_id": "faker:uuid4", "email": "faker:email"},
+    unique_fields=["user_id", "email"],
+)
+```
+
+And in YAML context files:
+
+```yaml
+employee_unique:
+  description: "HR employee with unique email"
+  sample:
+    name: "Fatima Al-Rashid"
+    email: "f.alrashid@corp.com"
+    department: "Engineering"
+    salary: 125000
+  prompt_hints:
+    - "Diverse names from different cultures"
+    - "Salary 50k–250k depending on seniority"
+  field_providers:
+    email: "faker:email"
+  unique_fields:
+    - email
+```
+
+**Rules:**
+- `unique_fields` must be a subset of `field_providers` keys — validated at schema construction time with a clear error
+- Works with **any Faker method** that has sufficient cardinality: `faker:email`, `faker:uuid4`, `faker:user_name`, `faker:phone_number`, `faker:iban`, `faker:ipv4`, `faker:company`, etc.
+- Avoid low-cardinality methods (e.g. `faker:boolean` has only 2 values) — Faker raises `UniquenessException` if it exhausts all possible distinct values
+- Uniqueness is guaranteed **within a single `generate()` call** (one batch). Across multiple `generate_batched()` iterations, each batch is internally unique but values can repeat between batches
 
 ---
 
@@ -828,7 +919,7 @@ Run `testdata-ai list-contexts` to see all contexts, or `testdata-ai show-contex
 - [x] OpenAI + Anthropic + Ollama provider-agnostic architecture
 - [x] 13 built-in contexts across 13 categories
 - [x] Schema validation with missing-field reporting
-- [x] CLI (`generate`, `list-contexts`, `show-context`, `list-models`) with JSON, JSONL, CSV, and YAML output
+- [x] CLI (`generate`, `list-contexts`, `show-context`, `list-models`) with JSON, JSONL, CSV, YAML, and SQL output
 - [x] Auto token estimation and adjustment
 - [x] Spinner with elapsed time (animated on TTY, static on non-TTY)
 - [x] `python -m testdata_ai` support
@@ -843,9 +934,10 @@ Run `testdata-ai list-contexts` to see all contexts, or `testdata-ai show-contex
 - [x] Locale / language support — `--locale pl` / `DataGenerator(locale="ja")` / `AI_LOCALE` env var; pytest plugin marker support
 - [x] Schema-from-model — `generate_from_model(MyPydanticModel)` / `generate_from_model(json_schema_dict)` / `--schema-file` CLI option
 - [x] Faker hybrid mode — `field_providers={"email": "faker:email"}` in `ContextSchema`; optional `testdata-ai[faker]` extra; locale-aware
+- [x] Unique field constraints — `unique_fields=["email", "user_id"]` in `ContextSchema`; uses Faker's uniqueness proxy; per-batch guarantee
+- [x] SQL output format — `-o sql` with `CREATE TABLE IF NOT EXISTS` + `INSERT INTO`; type inference; `--table` override
 
 **Next:**
-- [ ] SQL output format — `--output sql` / `-o sql` (INSERT statements, configurable table name)
 - [ ] `/docs` folder — installation, quickstart, CLI reference, API reference, custom contexts, pytest integration
 - [ ] Async API — `async def generate()` / `generate_batched()` for high-throughput pipelines
 - [ ] pandas output — `DataGenerator.to_dataframe()` convenience method

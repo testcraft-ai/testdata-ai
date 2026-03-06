@@ -7,7 +7,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from testdata_ai.cli import cli, _flatten_dict, _records_to_csv, _adjust_max_tokens, _run_streaming, _Spinner
+from testdata_ai.cli import cli, _flatten_dict, _records_to_csv, _records_to_sql, _adjust_max_tokens, _run_streaming, _Spinner
 from testdata_ai.contexts import CONTEXTS, ValidationError
 
 
@@ -105,6 +105,28 @@ class TestGenerateCmd:
         reader = csv.reader(io.StringIO(result.output.strip()))
         rows = list(reader)
         assert len(rows) == 2  # header + 1 data row
+
+    def test_generate_sql_to_stdout(self, runner):
+        sample = CONTEXTS["banking_user"].sample
+        with _patch_generator([sample]):
+            result = runner.invoke(
+                cli,
+                ["generate", "--context", "banking_user", "--count", "1", "-o", "sql", "-q"],
+            )
+        assert result.exit_code == 0
+        assert "CREATE TABLE IF NOT EXISTS banking_user" in result.output
+        assert "INSERT INTO banking_user VALUES" in result.output
+
+    def test_generate_sql_custom_table(self, runner):
+        sample = CONTEXTS["banking_user"].sample
+        with _patch_generator([sample]):
+            result = runner.invoke(
+                cli,
+                ["generate", "--context", "banking_user", "--count", "1", "-o", "sql", "--table", "users", "-q"],
+            )
+        assert result.exit_code == 0
+        assert "CREATE TABLE IF NOT EXISTS users" in result.output
+        assert "INSERT INTO users VALUES" in result.output
 
     def test_generate_jsonl_to_stdout(self, runner):
         sample = CONTEXTS["banking_user"].sample
@@ -382,6 +404,61 @@ class TestRecordsToCsv:
         assert rows[1]["b"] == "2"
 
 
+class TestRecordsToSql:
+
+    def test_empty_records(self):
+        assert _records_to_sql([]) == ""
+
+    def test_single_flat_record(self):
+        sql = _records_to_sql([{"id": 1, "name": "Alice"}])
+        assert "CREATE TABLE IF NOT EXISTS records" in sql
+        assert '"id" INTEGER' in sql
+        assert '"name" TEXT' in sql
+        assert "INSERT INTO records VALUES (1, 'Alice');" in sql
+
+    def test_custom_table_name(self):
+        sql = _records_to_sql([{"x": 1}], table="users")
+        assert "CREATE TABLE IF NOT EXISTS users" in sql
+        assert "INSERT INTO users VALUES" in sql
+
+    def test_nested_dict_column_names_use_underscore(self):
+        sql = _records_to_sql([{"addr": {"city": "NYC"}}])
+        assert '"addr_city"' in sql
+        assert "'NYC'" in sql
+
+    def test_type_inference_integer(self):
+        sql = _records_to_sql([{"n": 42}])
+        assert '"n" INTEGER' in sql
+
+    def test_type_inference_real(self):
+        sql = _records_to_sql([{"x": 3.14}])
+        assert '"x" REAL' in sql
+
+    def test_type_inference_text(self):
+        sql = _records_to_sql([{"s": "hello"}])
+        assert '"s" TEXT' in sql
+
+    def test_boolean_as_integer(self):
+        sql = _records_to_sql([{"flag": True}])
+        assert '"flag" INTEGER' in sql
+        assert "VALUES (1);" in sql
+
+    def test_none_as_null(self):
+        sql = _records_to_sql([{"a": None}])
+        assert "VALUES (NULL);" in sql
+
+    def test_string_escaping(self):
+        sql = _records_to_sql([{"name": "O'Brien"}])
+        assert "'O''Brien'" in sql
+
+    def test_multiple_records(self):
+        sql = _records_to_sql([{"id": 1}, {"id": 2}])
+        assert sql.count("INSERT INTO") == 2
+
+    def test_missing_field_is_null(self):
+        sql = _records_to_sql([{"a": 1, "b": 2}, {"a": 3}])
+        lines = [l for l in sql.splitlines() if l.startswith("INSERT")]
+        assert lines[1].endswith("(3, NULL);")
 
 
 class TestAdjustMaxTokens:

@@ -94,3 +94,87 @@ class TestApplyFakerFields:
         with patch("testdata_ai.faker_bridge.Faker", None):
             with pytest.raises(ImportError, match="pip install"):
                 apply_faker_fields([{"email": "x"}], {"email": "faker:email"})
+
+
+class TestApplyFakerFieldsUnique:
+
+    def test_unique_field_resolves_from_fake_unique(self, fake_faker_cls):
+        cls, fake = fake_faker_cls
+        fake.unique.email.return_value = "unique@example.com"
+        records = [{"email": "old@x.com"}]
+
+        with patch("testdata_ai.faker_bridge.Faker", cls):
+            result = apply_faker_fields(
+                records,
+                {"email": "faker:email"},
+                unique_fields=["email"],
+            )
+
+        assert result[0]["email"] == "unique@example.com"
+        fake.unique.email.assert_called_once()
+        fake.email.assert_not_called()
+
+    def test_non_unique_field_resolves_from_fake_directly(self, fake_faker_cls):
+        cls, fake = fake_faker_cls
+        records = [{"email": "old@x.com"}]
+
+        with patch("testdata_ai.faker_bridge.Faker", cls):
+            apply_faker_fields(records, {"email": "faker:email"})
+
+        fake.email.assert_called_once()
+        fake.unique.email.assert_not_called()
+
+    def test_mixed_unique_and_non_unique(self, fake_faker_cls):
+        cls, fake = fake_faker_cls
+        fake.unique.email.return_value = "unique@example.com"
+        fake.phone_number.return_value = "+48 000 111 222"
+        records = [{"email": "old@x.com", "phone": "000"}]
+
+        with patch("testdata_ai.faker_bridge.Faker", cls):
+            result = apply_faker_fields(
+                records,
+                {"email": "faker:email", "phone": "faker:phone_number"},
+                unique_fields=["email"],
+            )
+
+        assert result[0]["email"] == "unique@example.com"
+        assert result[0]["phone"] == "+48 000 111 222"
+        fake.unique.email.assert_called_once()
+        fake.email.assert_not_called()
+        fake.phone_number.assert_called_once()
+        fake.unique.phone_number.assert_not_called()
+
+    def test_unique_fields_none_uses_fake_directly(self, fake_faker_cls):
+        cls, fake = fake_faker_cls
+        records = [{"email": "x@x.com"}]
+
+        with patch("testdata_ai.faker_bridge.Faker", cls):
+            apply_faker_fields(records, {"email": "faker:email"}, unique_fields=None)
+
+        fake.email.assert_called_once()
+        fake.unique.email.assert_not_called()
+
+    def test_unique_fields_empty_list_uses_fake_directly(self, fake_faker_cls):
+        cls, fake = fake_faker_cls
+        records = [{"email": "x@x.com"}]
+
+        with patch("testdata_ai.faker_bridge.Faker", cls):
+            apply_faker_fields(records, {"email": "faker:email"}, unique_fields=[])
+
+        fake.email.assert_called_once()
+        fake.unique.email.assert_not_called()
+
+    def test_uniqueness_exception_propagates(self):
+        from faker.exceptions import UniquenessException
+
+        fake_instance = MagicMock()
+        fake_instance.unique.email.side_effect = UniquenessException("exhausted")
+        fake_cls = MagicMock(return_value=fake_instance)
+
+        with patch("testdata_ai.faker_bridge.Faker", fake_cls):
+            with pytest.raises(UniquenessException):
+                apply_faker_fields(
+                    [{"email": "x@x.com"}],
+                    {"email": "faker:email"},
+                    unique_fields=["email"],
+                )

@@ -74,8 +74,13 @@ def _load_context_files(context_files, quiet: bool = False) -> None:
     "fmt",
     default="json",
     show_default=True,
-    type=click.Choice(["json", "jsonl", "csv", "yaml"]),
+    type=click.Choice(["json", "jsonl", "csv", "yaml", "sql"]),
     help="Output format. Write to file via shell redirection: -o csv > data.csv",
+)
+@click.option(
+    "--table",
+    default=None,
+    help="Table name for SQL output (default: context name or 'records').",
 )
 @click.option(
     "--provider", default=None, help="AI provider (overrides AI_PROVIDER env var)."
@@ -114,7 +119,7 @@ def _load_context_files(context_files, quiet: bool = False) -> None:
 @_context_file_option
 def generate(
     context, schema_file, count, fmt, provider, model, max_tokens, temperature, no_validate,
-    batch_size, quiet, locale, context_files,
+    batch_size, quiet, locale, context_files, table,
 ):
     """Generate realistic test data using AI."""
     if not context and not schema_file:
@@ -123,6 +128,12 @@ def generate(
         raise click.ClickException("--context and --schema-file are mutually exclusive.")
 
     _load_context_files(context_files, quiet)
+
+    if table is None:
+        table = context if context else "records"
+    table = "".join(c if c.isalnum() or c == "_" else "_" for c in table) or "records"
+    if table[0].isdigit():
+        table = f"_{table}"
 
     if context:
         try:
@@ -142,16 +153,16 @@ def generate(
         raise click.ClickException(str(e))
 
     if schema_file:
-        _run_schema_file(gen, schema_file, count, fmt, no_validate, quiet, max_tokens)
+        _run_schema_file(gen, schema_file, count, fmt, no_validate, quiet, max_tokens, table)
         return
 
     _adjust_max_tokens(gen, schema, min(count, batch_size), quiet, user_set=max_tokens is not None)
 
-    records = _run_streaming(gen, context, count, batch_size, fmt, no_validate, quiet)
+    records = _run_streaming(gen, context, count, batch_size, fmt, no_validate, quiet, table)
     _report(records, count, gen.provider.max_tokens, quiet)
 
 
-def _run_schema_file(gen, schema_file, count, fmt, no_validate, quiet, max_tokens_user_set):
+def _run_schema_file(gen, schema_file, count, fmt, no_validate, quiet, max_tokens_user_set, table="records"):
     """Generate data from a JSON/YAML schema file using generate_from_model."""
     try:
         with open(schema_file) as f:
@@ -178,11 +189,11 @@ def _run_schema_file(gen, schema_file, count, fmt, no_validate, quiet, max_token
     except RuntimeError as e:
         raise click.ClickException(f"API error: {e}")
 
-    _output_records(records, fmt)
+    _output_records(records, fmt, table)
     _report(records, count, gen.provider.max_tokens, quiet)
 
 
-def _output_records(records: List[Dict[str, Any]], fmt: str) -> None:
+def _output_records(records: List[Dict[str, Any]], fmt: str, table: str = "records") -> None:
     """Write records to stdout in the requested format."""
     if fmt == "json":
         click.echo(json.dumps(records, indent=2))
@@ -193,6 +204,8 @@ def _output_records(records: List[Dict[str, Any]], fmt: str) -> None:
         click.echo(yaml.dump(records, allow_unicode=True, sort_keys=False), nl=False)
     elif fmt == "csv":
         click.echo(_records_to_csv(records), nl=False)
+    elif fmt == "sql":
+        click.echo(_records_to_sql(records, table), nl=False)
 
 
 def _adjust_max_tokens(gen, context_schema, count, quiet, user_set):
@@ -218,7 +231,7 @@ def _adjust_max_tokens(gen, context_schema, count, quiet, user_set):
         )
 
 
-def _run_streaming(gen, context, count, batch_size, fmt, no_validate, quiet):
+def _run_streaming(gen, context, count, batch_size, fmt, no_validate, quiet, table="records"):
     """Generate in batches, streaming records to stdout as each batch completes."""
     total_batches = math.ceil(count / batch_size)
     label = f"Generating {count} {context} records ({gen.config.provider}/{gen.config.model})"
@@ -249,6 +262,8 @@ def _run_streaming(gen, context, count, batch_size, fmt, no_validate, quiet):
                     click.echo(json.dumps(all_records, indent=2))
                 elif fmt == "csv":
                     click.echo(_records_to_csv(all_records), nl=False)
+                elif fmt == "sql":
+                    click.echo(_records_to_sql(all_records, table), nl=False)
     except ValueError as e:
         raise click.ClickException(str(e))
     except RuntimeError as e:
@@ -457,3 +472,43 @@ def _records_to_csv(records: List[Dict[str, Any]]) -> str:
     writer.writeheader()
     writer.writerows(flat)
     return buf.getvalue()
+
+
+def _records_to_sql(records: List[Dict[str, Any]], table: str = "records") -> str:
+    """Convert records to SQL DDL + INSERT statements. Nested dicts are dot-flattened."""
+    if not records:
+        return ""
+    flat = [_flatten_dict(r) for r in records]
+    fieldnames = list(dict.fromkeys(k for row in flat for k in row))
+
+    def _col_name(name: str) -> str:
+        sanitized = "".join(c if c.isalnum() or c == "_" else "_" for c in name)
+        return f'"{sanitized}"'
+
+    def _infer_type(col: str) -> str:
+        vals = [row[col] for row in flat if col in row and row[col] is not None]
+        if not vals:
+            return "TEXT"
+        if all(isinstance(v, bool) for v in vals):
+            return "INTEGER"
+        if all(isinstance(v, int) and not isinstance(v, bool) for v in vals):
+            return "INTEGER"
+        if all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in vals):
+            return "REAL"
+        return "TEXT"
+
+    def _sql_val(v: Any) -> str:
+        if v is None:
+            return "NULL"
+        if isinstance(v, bool):
+            return "1" if v else "0"
+        if isinstance(v, (int, float)):
+            return str(v)
+        return "'" + str(v).replace("'", "''") + "'"
+
+    col_defs = ",\n  ".join(f"{_col_name(f)} {_infer_type(f)}" for f in fieldnames)
+    lines = [f"CREATE TABLE IF NOT EXISTS {table} (\n  {col_defs}\n);", ""]
+    for row in flat:
+        vals = ", ".join(_sql_val(row.get(f)) for f in fieldnames)
+        lines.append(f"INSERT INTO {table} VALUES ({vals});")
+    return "\n".join(lines) + "\n"

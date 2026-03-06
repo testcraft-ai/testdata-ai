@@ -564,7 +564,9 @@ class TestGenerateFromModel:
 
         assert result == records
         mock_cls.assert_called_once_with(locale=None)
-        mock_instance.generate_from_model.assert_called_once_with(_FakeModel, 1, True, field_providers=None)
+        mock_instance.generate_from_model.assert_called_once_with(
+            _FakeModel, 1, True, field_providers=None, unique_fields=None
+        )
 
     def test_module_level_passes_locale(self):
         with patch("testdata_ai.generator.DataGenerator") as mock_cls:
@@ -608,7 +610,7 @@ class TestGenerateFromModel:
 
         assert result == records
         mock_instance.generate_from_model.assert_called_once_with(
-            _FakeModel, 1, True, field_providers=fp
+            _FakeModel, 1, True, field_providers=fp, unique_fields=None
         )
 
 
@@ -678,3 +680,76 @@ class TestFakerHybridGenerate:
             gen.generate("test_faker_locale_ctx", count=1, validate=False)
 
         fake_cls.assert_called_once_with("pl_PL")
+
+
+class TestUniqueFieldsIntegration:
+    """unique_fields flows through DataGenerator.generate() and generate_from_model()."""
+
+    def test_generate_passes_unique_fields_to_apply_faker_fields(self, make_generator):
+        from testdata_ai.contexts import register_context, ContextSchema
+
+        register_context(
+            "test_unique_ctx",
+            ContextSchema(
+                description="unique test",
+                sample={"email": "x@x.com"},
+                prompt_hints=[],
+                field_providers={"email": "faker:email"},
+                unique_fields=["email"],
+            ),
+            overwrite=True,
+        )
+
+        ai_response = json.dumps({"data": [{"email": "ai@ai.com"}]})
+        gen = make_generator(ai_response)
+
+        with patch("testdata_ai.faker_bridge.apply_faker_fields") as mock_apply:
+            mock_apply.return_value = [{"email": "faker@example.com"}]
+            gen.generate("test_unique_ctx", count=1, validate=False)
+
+        mock_apply.assert_called_once_with(
+            [{"email": "ai@ai.com"}],
+            {"email": "faker:email"},
+            locale=None,
+            unique_fields=["email"],
+        )
+
+    def test_generate_from_model_passes_unique_fields(self, make_generator):
+        records = [{"name": "Alice", "age": 30}]
+        gen = make_generator(json.dumps({"data": records}))
+
+        with patch("testdata_ai.faker_bridge.apply_faker_fields") as mock_apply:
+            mock_apply.return_value = records
+            gen.generate_from_model(
+                _FakeModel,
+                count=1,
+                validate=False,
+                field_providers={"name": "faker:name"},
+                unique_fields=["name"],
+            )
+
+        mock_apply.assert_called_once_with(
+            records,
+            {"name": "faker:name"},
+            locale=None,
+            unique_fields=["name"],
+        )
+
+    def test_module_level_generate_from_model_passes_unique_fields(self):
+        with patch("testdata_ai.generator.DataGenerator") as mock_cls:
+            mock_instance = MagicMock()
+            mock_instance.generate_from_model.return_value = []
+            mock_cls.return_value = mock_instance
+
+            generate_from_model(
+                _FakeModel,
+                count=1,
+                field_providers={"name": "faker:name"},
+                unique_fields=["name"],
+            )
+
+        mock_instance.generate_from_model.assert_called_once_with(
+            _FakeModel, 1, True,
+            field_providers={"name": "faker:name"},
+            unique_fields=["name"],
+        )

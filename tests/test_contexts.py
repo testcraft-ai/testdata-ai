@@ -618,3 +618,99 @@ class TestValidationError:
     def test_is_subclass_of_value_error(self):
         err = ValidationError([])
         assert isinstance(err, ValueError)
+
+
+class TestContextSchemaUniqueFields:
+    """Unit tests for ContextSchema.unique_fields validation."""
+
+    # --- valid cases ---
+
+    def test_unique_fields_none_is_default(self):
+        schema = ContextSchema(
+            description="t",
+            sample={"email": "x"},
+            prompt_hints=[],
+            field_providers={"email": "faker:email"},
+        )
+        assert schema.unique_fields is None
+
+    def test_unique_fields_valid_subset_of_field_providers(self):
+        schema = ContextSchema(
+            description="t",
+            sample={"email": "x", "phone": "y"},
+            prompt_hints=[],
+            field_providers={"email": "faker:email", "phone": "faker:phone_number"},
+            unique_fields=["email"],
+        )
+        assert schema.unique_fields == ["email"]
+
+    def test_unique_fields_empty_list_is_valid(self):
+        schema = ContextSchema(
+            description="t",
+            sample={"email": "x"},
+            prompt_hints=[],
+            field_providers={"email": "faker:email"},
+            unique_fields=[],
+        )
+        assert schema.unique_fields == []
+
+    def test_unique_fields_all_fp_keys_is_valid(self):
+        schema = ContextSchema(
+            description="t",
+            sample={"email": "x", "phone": "y"},
+            prompt_hints=[],
+            field_providers={"email": "faker:email", "phone": "faker:phone_number"},
+            unique_fields=["email", "phone"],
+        )
+        assert set(schema.unique_fields) == {"email", "phone"}
+
+    # --- error cases ---
+
+    def test_unique_fields_not_list_raises(self):
+        with pytest.raises(ValueError, match="must be a list"):
+            ContextSchema(
+                description="t",
+                sample={"email": "x"},
+                prompt_hints=[],
+                field_providers={"email": "faker:email"},
+                unique_fields="email",  # type: ignore[arg-type]
+            )
+
+    def test_unique_fields_without_field_providers_raises(self):
+        with pytest.raises(ValueError, match="requires 'field_providers'"):
+            ContextSchema(
+                description="t",
+                sample={"email": "x"},
+                prompt_hints=[],
+                unique_fields=["email"],
+            )
+
+    def test_unique_fields_field_not_in_field_providers_raises(self):
+        with pytest.raises(ValueError, match="not covered by 'field_providers'"):
+            ContextSchema(
+                description="t",
+                sample={"email": "x", "name": "y"},
+                prompt_hints=[],
+                field_providers={"email": "faker:email"},
+                unique_fields=["name"],
+            )
+
+    def test_unique_fields_error_names_the_bad_field(self):
+        with pytest.raises(ValueError, match="name"):
+            ContextSchema(
+                description="t",
+                sample={"email": "x", "name": "y"},
+                prompt_hints=[],
+                field_providers={"email": "faker:email"},
+                unique_fields=["name"],
+            )
+
+    def test_unique_fields_partial_invalid_raises(self):
+        with pytest.raises(ValueError, match="not covered by 'field_providers'"):
+            ContextSchema(
+                description="t",
+                sample={"email": "x", "phone": "y", "name": "z"},
+                prompt_hints=[],
+                field_providers={"email": "faker:email", "phone": "faker:phone_number"},
+                unique_fields=["email", "name"],
+            )
