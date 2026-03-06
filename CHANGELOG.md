@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-03-06
+
+### Added
+- **Unique field constraints** — `ContextSchema` accepts an optional `unique_fields` list; fields in
+  this list (must be a subset of `field_providers` keys) are generated via Faker's uniqueness proxy,
+  guaranteeing no duplicate values within a single batch
+- `apply_faker_fields()` in `faker_bridge.py` gains a `unique_fields` parameter; uniqueness is
+  enforced per `generate()` call using `fake.unique.<method>()`
+- `DataGenerator.generate()`, `generate_from_model()`, and the module-level convenience functions
+  accept a new `unique_fields` keyword argument
+- **SQL output format** — CLI `-o sql` emits a `CREATE TABLE IF NOT EXISTS` DDL statement followed by
+  `INSERT INTO` statements compatible with SQLite and most major databases; column types are inferred
+  per field (`INTEGER`, `REAL`, `TEXT`); nested dicts are flattened with `_` separators; lists are
+  serialized as JSON strings
+- `--table TEXT` CLI option overrides the default table name (context name or `"records"`)
+- `examples/unique_contexts.yaml` and `examples/unique_fields.py` — usage demos for unique fields
+
+### Changed
+- `ContextSchema` validates at construction time that `unique_fields ⊆ field_providers.keys()`
+
 ## [0.6.0] - 2026-03-05
 
 ### Added
@@ -76,7 +96,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.env` / environment variable configuration per provider
 - `py.typed` marker — fully typed public API
 
-[Unreleased]: https://github.com/testcraft-ai/testdata-ai/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/testcraft-ai/testdata-ai/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/testcraft-ai/testdata-ai/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/testcraft-ai/testdata-ai/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/testcraft-ai/testdata-ai/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/testcraft-ai/testdata-ai/compare/v0.3.0...v0.4.0
