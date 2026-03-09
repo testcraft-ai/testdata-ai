@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-03-09
+
+### Added
+- **Multi-entity datasets with referential integrity** — `generate_with_relationships(graph)` generates
+  multiple related entity types (customers → orders → shipments) in topological order; child prompts
+  include sample parent records for semantic coherence; FK fields are injected as a safety net after
+  AI generation, guaranteeing valid foreign keys in every child record
+- `testdata_ai/relationship_graph.py`: `RelationshipNodeSpec`, `parse_graph()`, `topological_sort()`
+  (Kahn BFS), `inject_fk()`
+- CLI command `generate-related --graph-file PATH` with `-o json|jsonl-per-entity` output formats
+- `generate_with_relationships` exported from top-level `testdata_ai` package
+- `examples/ecommerce_graph.yaml` and `examples/relationships.py` — usage demos
+
 ### Changed
 - **Test suite reorganised into subdirectories** — `tests/` now contains seven focused subdirectories
   (`cli/`, `generator/`, `contexts/`, `plugin/`, `providers/`, `cache/`, `core/`) instead of one flat
