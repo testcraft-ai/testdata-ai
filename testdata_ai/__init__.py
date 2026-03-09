@@ -7,7 +7,7 @@ try:
 except PackageNotFoundError:
     __version__ = "0.0.0-dev"
 
-from testdata_ai.generator import DataGenerator, generate, generate_from_model
+from testdata_ai.generator import DataGenerator, generate, generate_from_model, generate_with_relationships
 from testdata_ai.contexts import (
     ContextSchema,
     list_contexts,
@@ -20,6 +20,7 @@ __all__ = [
     "DataGenerator",
     "generate",
     "generate_from_model",
+    "generate_with_relationships",
     "ContextSchema",
     "list_contexts",
     "get_context_schema",

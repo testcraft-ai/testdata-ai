@@ -36,6 +36,55 @@ _context_file_option = click.option(
 )
 
 
+def _common_options(f):
+    """Options shared by `generate` and `generate-related`."""
+    for opt in reversed([
+        click.option(
+            "-o", "--output", "fmt",
+            default="json",
+            show_default=True,
+            type=click.Choice(["json", "jsonl", "csv", "yaml", "sql"]),
+            help="Output format. Write to file via shell redirection: -o csv > data.csv",
+        ),
+        click.option("--provider", default=None, help="AI provider (overrides AI_PROVIDER env var)."),
+        click.option("--model", default=None, help="Model name (overrides default)."),
+        click.option(
+            "--max-tokens", default=None, type=int,
+            help="Max tokens for AI response (increase if you get fewer records than expected).",
+        ),
+        click.option(
+            "--temperature", default=None, type=float,
+            help="Sampling temperature 0.0-1.0 (higher = more creative).",
+        ),
+        click.option("--no-validate", is_flag=True, help="Skip schema validation of generated data."),
+        click.option(
+            "--batch-size", default=10, show_default=True, type=int,
+            help="Records per AI call. For count > batch-size, records stream progressively.",
+        ),
+        click.option("-q", "--quiet", is_flag=True, help="Suppress status messages (only output data)."),
+        click.option(
+            "--locale", default=None,
+            help="Locale/language for generated values (e.g. pl, ja, de). Overrides AI_LOCALE env var.",
+        ),
+    ]):
+        f = opt(f)
+    return f
+
+
+def _make_generator(provider, model, max_tokens, temperature, locale) -> "DataGenerator":
+    """Instantiate DataGenerator, converting errors to ClickException."""
+    try:
+        return DataGenerator(
+            provider=provider,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            locale=locale,
+        )
+    except (ValueError, ImportError) as e:
+        raise click.ClickException(str(e))
+
+
 def _load_context_files(context_files, quiet: bool = False) -> None:
     """Load custom context definitions from a sequence of file paths.
 
@@ -68,53 +117,11 @@ def _load_context_files(context_files, quiet: bool = False) -> None:
 @click.option(
     "--count", default=10, show_default=True, help="Number of records to generate."
 )
-@click.option(
-    "-o",
-    "--output",
-    "fmt",
-    default="json",
-    show_default=True,
-    type=click.Choice(["json", "jsonl", "csv", "yaml", "sql"]),
-    help="Output format. Write to file via shell redirection: -o csv > data.csv",
-)
+@_common_options
 @click.option(
     "--table",
     default=None,
     help="Table name for SQL output (default: context name or 'records').",
-)
-@click.option(
-    "--provider", default=None, help="AI provider (overrides AI_PROVIDER env var)."
-)
-@click.option("--model", default=None, help="Model name (overrides default).")
-@click.option(
-    "--max-tokens",
-    default=None,
-    type=int,
-    help="Max tokens for AI response (increase if you get fewer records than expected).",
-)
-@click.option(
-    "--temperature",
-    default=None,
-    type=float,
-    help="Sampling temperature 0.0-1.0 (higher = more creative).",
-)
-@click.option(
-    "--no-validate", is_flag=True, help="Skip schema validation of generated data."
-)
-@click.option(
-    "--batch-size",
-    default=10,
-    show_default=True,
-    type=int,
-    help="Records per AI call. For count > batch-size, records stream progressively.",
-)
-@click.option(
-    "-q", "--quiet", is_flag=True, help="Suppress status messages (only output data)."
-)
-@click.option(
-    "--locale",
-    default=None,
-    help="Locale/language for generated values (e.g. pl, ja, de). Overrides AI_LOCALE env var.",
 )
 @_context_file_option
 def generate(
@@ -141,16 +148,7 @@ def generate(
         except ValueError as e:
             raise click.ClickException(str(e))
 
-    try:
-        gen = DataGenerator(
-            provider=provider,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            locale=locale,
-        )
-    except (ValueError, ImportError) as e:
-        raise click.ClickException(str(e))
+    gen = _make_generator(provider, model, max_tokens, temperature, locale)
 
     if schema_file:
         _run_schema_file(gen, schema_file, count, fmt, no_validate, quiet, max_tokens, table)
@@ -369,6 +367,118 @@ def list_models_cmd(provider):
     click.echo("-" * 40)
     for name in models:
         click.echo(name)
+
+
+@cli.command("generate-related")
+@click.option(
+    "--graph-file",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="YAML or JSON file describing the entity relationship graph.",
+)
+@_common_options
+def generate_related_cmd(graph_file, fmt, provider, model, max_tokens, temperature,
+                         no_validate, batch_size, quiet, locale):
+    """Generate multiple related entity datasets with referential integrity.
+
+    The graph file (YAML or JSON) defines entities and their relationships.
+    Parents are generated first; child prompts embed sample parent records for
+    semantic coherence. FK values are enforced after generation.
+
+    \b
+    Example graph file (relationships.yaml):
+      users:
+        context: ecommerce_customer
+        count: 5
+      orders:
+        context: restaurant_order
+        count: 20
+        parent: users
+        fk_field: user_id
+        parent_pk: email
+    """
+    # Load graph file
+    try:
+        with open(graph_file) as f:
+            content = f.read()
+        if graph_file.endswith(".json"):
+            graph = json.loads(content)
+        else:
+            graph = yaml.safe_load(content)
+    except (OSError, ValueError, yaml.YAMLError) as e:
+        raise click.ClickException(f"Failed to load graph file: {e}")
+
+    if not isinstance(graph, dict):
+        raise click.ClickException("Graph file must contain a YAML/JSON object (mapping).")
+
+    # Apply CLI batch_size as default for nodes that don't specify their own
+    for node in graph.values():
+        if isinstance(node, dict):
+            node.setdefault("batch_size", batch_size)
+
+    # Build generator
+    gen = _make_generator(provider, model, max_tokens, temperature, locale)
+
+    # Auto-adjust max_tokens for each node (skipped when user passed --max-tokens)
+    for node in graph.values():
+        if not isinstance(node, dict):
+            continue
+        context_name = node.get("context")
+        if not context_name:
+            continue
+        try:
+            node_schema = get_context_schema(context_name)
+        except ValueError:
+            continue  # unknown context will raise a clearer error later
+        node_batch = node.get("batch_size", batch_size)
+        _adjust_max_tokens(gen, node_schema, node_batch, quiet, user_set=max_tokens is not None)
+
+    entity_names = list(graph.keys())
+    if not quiet:
+        click.echo(
+            click.style(
+                f"Generating related entities: {', '.join(entity_names)} "
+                f"[{gen.config.provider}/{gen.config.model}]",
+                fg="cyan",
+            ),
+            err=True,
+        )
+
+    with _Spinner("Starting…", silent=quiet) as spinner:
+        try:
+            result = gen.generate_with_relationships(
+                graph,
+                validate=not no_validate,
+                progress_callback=spinner.update if not quiet else None,
+            )
+        except ValueError as e:
+            raise click.ClickException(str(e))
+        except Exception as e:
+            raise click.ClickException(f"Generation failed: {e}")
+
+    # Output
+    if fmt == "json":
+        click.echo(json.dumps(result, indent=2))
+    elif fmt == "jsonl":
+        for entity_name, records in result.items():
+            click.echo(json.dumps({"entity": entity_name, "records": records}))
+    elif fmt == "yaml":
+        click.echo(yaml.dump(result, allow_unicode=True, sort_keys=False), nl=False)
+    elif fmt == "csv":
+        for entity_name, records in result.items():
+            click.echo(f"# entity: {entity_name}")
+            click.echo(_records_to_csv(records), nl=False)
+    elif fmt == "sql":
+        for entity_name, records in result.items():
+            click.echo(_records_to_sql(records, entity_name), nl=False)
+
+    if not quiet:
+        total = sum(len(recs) for recs in result.values())
+        per_entity = ", ".join(f"{k}: {len(v)}" for k, v in result.items())
+        click.echo(
+            click.style(f"Generated {total} total records ({per_entity})", fg="green"),
+            err=True,
+        )
 
 
 class _Spinner:

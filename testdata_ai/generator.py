@@ -3,11 +3,13 @@ Core test data generator - provider agnostic.
 Supports OpenAI, Anthropic, and other AI providers.
 """
 
-__all__ = ["DataGenerator", "generate", "generate_batched", "generate_from_model"]
+__all__ = ["DataGenerator", "generate", "generate_batched", "generate_from_model", "generate_with_relationships"]
 
 import json
+import math
 import os
-from typing import Dict, Iterator, List, Any, Optional
+import random
+from typing import Callable, Dict, Iterator, List, Any, Optional
 import logging
 
 from testdata_ai.prompts import get_prompt, _build_prompt
@@ -21,6 +23,28 @@ from testdata_ai.ai_providers import get_provider, AIProvider
 from testdata_ai.schema_adapter import model_to_context_schema
 
 logger = logging.getLogger(__name__)
+
+
+def _build_child_prompt(
+    schema,
+    count: int,
+    parent_records: List[Dict[str, Any]],
+    fk_field: str,
+    parent_pk: str,
+    parent_entity_name: str,
+    locale: Optional[str] = None,
+) -> str:
+    """Build a prompt for a child entity, embedding sample parent records for coherence."""
+    base = _build_prompt(schema, count, locale)
+    parent_json = json.dumps(parent_records, indent=2)
+    return (
+        f"{base}"
+        f"\nPARENT RECORDS — '{parent_entity_name}' (generate semantically consistent"
+        f" child records that make sense for these parents):\n"
+        f"{parent_json}\n"
+        f"\nFor each record, set '{fk_field}' to one of the '{parent_pk}' values"
+        f" from the {parent_entity_name} parent records shown above.\n"
+    )
 
 
 class DataGenerator:
@@ -259,6 +283,153 @@ class DataGenerator:
                 f"Requested {count} total records but generated {total_yielded}"
             )
 
+    def generate_with_relationships(
+        self,
+        graph: Dict[str, Any],
+        validate: bool = True,
+        progress_callback: Optional[Callable[[str], None]] = None,
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Generate multiple related entity datasets with referential integrity.
+
+        Generates entities in dependency order (parents before children). Child
+        prompts include sample parent records so the AI produces semantically
+        coherent data (e.g. order amounts that match the parent customer's income).
+        FK values are enforced after generation regardless of AI compliance.
+
+        Args:
+            graph: Relationship graph dict. Each key is an entity name; each value
+                is a dict with required keys ``context`` (str) and ``count`` (int).
+                Child nodes additionally require ``parent`` (str), ``fk_field`` (str),
+                and ``parent_pk`` (str). Optional ``parent_sample_size`` (int, default 3)
+                controls how many parent records are embedded in the child prompt.
+                Optional ``batch_size`` (int, default 10) controls records per AI call.
+
+                Example::
+
+                    {
+                        "users": {"context": "ecommerce_customer", "count": 5},
+                        "orders": {
+                            "context": "restaurant_order",
+                            "count": 20,
+                            "parent": "users",
+                            "fk_field": "user_id",
+                            "parent_pk": "email",
+                        },
+                    }
+
+            validate: Whether to validate each entity against its context schema.
+            progress_callback: Optional callable invoked with a progress message
+                string before each AI call (e.g. ``spinner.update``).
+
+        Returns:
+            Dict mapping entity name to list of generated records, in graph key order.
+
+        Raises:
+            ValueError: If the graph is malformed, contains cycles, or references
+                unknown contexts or undefined parent nodes.
+            ValidationError: If generated records fail schema validation and
+                ``validate=True``.
+        """
+        from testdata_ai.relationship_graph import parse_graph, topological_sort, inject_fk
+
+        specs = parse_graph(graph)
+        order = topological_sort(specs)
+
+        result: Dict[str, List[Dict[str, Any]]] = {}
+
+        for node_name in order:
+            spec = specs[node_name]
+            schema = get_context_schema(spec.context)
+            total_batches = math.ceil(spec.count / spec.batch_size)
+
+            records = []
+            remaining = spec.count
+            batch_num = 0
+
+            if spec.parent is None:
+                while remaining > 0:
+                    batch_num += 1
+                    batch_count = min(spec.batch_size, remaining)
+                    if progress_callback:
+                        progress_callback(
+                            f"Generating {node_name} ({batch_num}/{total_batches})…"
+                        )
+                    batch = self.generate(spec.context, batch_count, validate=validate)
+                    if not batch:
+                        break
+                    records.extend(batch)
+                    remaining -= len(batch)
+                if len(records) < spec.count:
+                    logger.warning(
+                        f"Requested {spec.count} {node_name} records but generated {len(records)}"
+                    )
+            else:
+                parent_records = result[spec.parent]
+                n_samples = min(spec.parent_sample_size, len(parent_records), 5)
+                sample_parents = (
+                    random.sample(parent_records, n_samples)
+                    if len(parent_records) > n_samples
+                    else parent_records
+                )
+
+                while remaining > 0:
+                    batch_num += 1
+                    batch_count = min(spec.batch_size, remaining)
+                    if progress_callback:
+                        progress_callback(
+                            f"Generating {node_name} ({batch_num}/{total_batches})…"
+                        )
+                    prompt = _build_child_prompt(
+                        schema,
+                        batch_count,
+                        sample_parents,
+                        spec.fk_field,
+                        spec.parent_pk,
+                        spec.parent,
+                        self.locale,
+                    )
+                    raw = _strip_markdown_fences(self.provider.generate(prompt))
+                    batch = _parse_ai_response(raw)
+
+                    if not batch:
+                        break
+
+                    if schema.field_providers:
+                        from testdata_ai.faker_bridge import apply_faker_fields
+                        batch = apply_faker_fields(
+                            batch,
+                            schema.field_providers,
+                            locale=self.locale,
+                            unique_fields=schema.unique_fields,
+                        )
+
+                    batch = inject_fk(batch, parent_records, spec.fk_field, spec.parent_pk)
+
+                    if validate:
+                        invalid = [
+                            {"record_index": i, "missing_fields": schema.missing_fields(r)}
+                            for i, r in enumerate(batch)
+                            if not schema.validate_record(r)
+                        ]
+                        if invalid:
+                            raise ValidationError(invalid)
+
+                    records.extend(batch)
+                    remaining -= len(batch)
+
+                if len(records) < spec.count:
+                    logger.warning(
+                        f"Requested {spec.count} {node_name} records but generated {len(records)}"
+                    )
+                logger.info(
+                    f"Generated {len(records)} {node_name} records "
+                    f"(parent: {spec.parent}, fk: {spec.fk_field}={spec.parent_pk})"
+                )
+
+            result[node_name] = records
+
+        return result
+
 
 def _parse_ai_response(raw: str) -> List[Dict[str, Any]]:
     """Parse and normalize an AI JSON response to a list of records."""
@@ -346,6 +517,34 @@ def generate_from_model(
         field_providers=field_providers,
         unique_fields=unique_fields,
     )
+
+
+def generate_with_relationships(
+    graph: Dict[str, Any],
+    validate: bool = True,
+    locale: Optional[str] = None,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Convenience function: generate multiple related entity datasets.
+
+    Creates a new DataGenerator each call. For repeated use, instantiate
+    DataGenerator directly and call generate_with_relationships() on it.
+
+    Example:
+        >>> from testdata_ai import generate_with_relationships
+        >>> result = generate_with_relationships({
+        ...     "users": {"context": "ecommerce_customer", "count": 3},
+        ...     "orders": {
+        ...         "context": "restaurant_order",
+        ...         "count": 10,
+        ...         "parent": "users",
+        ...         "fk_field": "user_id",
+        ...         "parent_pk": "email",
+        ...     },
+        ... })
+        >>> result["users"]   # 3 customer records
+        >>> result["orders"]  # 10 order records, each with user_id from a customer email
+    """
+    return DataGenerator(locale=locale).generate_with_relationships(graph, validate=validate)
 
 
 def generate(

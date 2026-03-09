@@ -1,0 +1,24 @@
+# E-commerce relationship graph
+#
+# Generate customers and their orders with referential integrity.
+# Child prompts include sample parent records so the AI produces
+# semantically consistent data (order amounts matching customer tier, etc.).
+#
+# Usage:
+#   testdata-ai generate-related --graph-file examples/ecommerce_graph.yaml
+#   testdata-ai generate-related --graph-file examples/ecommerce_graph.yaml -o jsonl-per-entity
+#   testdata-ai generate-related --graph-file examples/ecommerce_graph.yaml --locale pl
+#   testdata-ai generate-related --graph-file examples/ecommerce_graph.yaml --batch-size 5
+
+customers:
+  context: ecommerce_customer
+  count: 5
+
+orders:
+  context: restaurant_order
+  count: 20
+  parent: customers
+  fk_field: customer_email   # field injected into each order record
+  parent_pk: email            # field taken from parent customer records
+  parent_sample_size: 3       # how many customer records shown in the AI prompt
+  batch_size: 10              # records per AI call (default 10); lower = faster first results

@@ -34,7 +34,7 @@ testdata-ai generate --context ecommerce_customer --count 10
 ```
 
 ```python
-from testdata_ai import generate, generate_from_model
+from testdata_ai import generate, generate_from_model, generate_with_relationships
 from pydantic import BaseModel
 
 # Built-in context
@@ -47,6 +47,16 @@ class Order(BaseModel):
     status: str
 
 orders = generate_from_model(Order, count=10)
+
+# Multi-entity datasets with referential integrity
+result = generate_with_relationships({
+    "customers": {"context": "ecommerce_customer", "count": 5},
+    "orders": {
+        "context": "restaurant_order", "count": 20,
+        "parent": "customers", "fk_field": "customer_email", "parent_pk": "email",
+    },
+})
+# result["orders"][*]["customer_email"] is always a real customer email
 ```
 
 **Why testdata-ai?**
@@ -57,6 +67,7 @@ orders = generate_from_model(Order, count=10)
 - **Pydantic / JSON Schema support** — generate data directly from your existing models
 - **Faker hybrid mode** — mark fields as `faker:email` / `faker:iban` to get format-guaranteed values while AI handles the semantic context
 - **Unique field constraints** — add `unique_fields=["email", "user_id"]` to any context and those fields will never duplicate within a batch
+- **Multi-entity datasets** — `generate_with_relationships()` generates customers → orders → shipments with guaranteed FK integrity _and_ semantic coherence (child records make sense given parent records)
 
 | | Faker | testdata-ai |
 |---|---|---|
@@ -67,6 +78,7 @@ orders = generate_from_model(Order, count=10)
 | Use your own Pydantic model | Not possible | `generate_from_model(MyModel, count=10)` |
 | Format-safe critical fields | ✅ Faker's domain | `field_providers={"email": "faker:email"}` |
 | Unique values across records | Requires manual set tracking | `unique_fields=["email", "user_id"]` |
+| Multi-entity FK datasets | Sequential, no semantic link | `generate_with_relationships(graph)` — child records contextually match parents |
 
 **Why not just use Faker?**
 
@@ -96,7 +108,9 @@ country="Japan"
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [CLI](#cli)
+  - [generate-related](#generate-related)
 - [Python API](#python-api)
+  - [generate\_with\_relationships()](#generate_with_relationships--multi-entity-datasets)
   - [generate\_from\_model()](#generate_from_model--schema-from-pydantic--json-schema)
 - [Custom Contexts](#custom-contexts)
 - [Faker Hybrid Mode](#faker-hybrid-mode)
@@ -317,6 +331,93 @@ If no models are found, the command prints a hint to run `ollama pull <model>`.
 
 ---
 
+### `generate-related`
+
+Generate multiple related entity datasets with guaranteed referential integrity.
+Unlike running `generate` separately for each entity, child prompts include sample parent records
+so the AI produces **semantically coherent** data — order amounts match the parent customer's
+income tier, shipment addresses match the order destination, etc.
+
+```bash
+testdata-ai generate-related --graph-file <path> [OPTIONS]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--graph-file PATH` | — | YAML or JSON relationship graph file (required) |
+| `-o, --output [json\|jsonl-per-entity]` | `json` | Output format |
+| `--batch-size INTEGER` | `10` | Records per AI call (applied to all nodes unless overridden in graph) |
+| `--provider TEXT` | from env | AI provider override |
+| `--model TEXT` | from env | Model name override |
+| `--max-tokens INTEGER` | from env | Max tokens per AI call (auto-adjusted per node by default) |
+| `--temperature FLOAT` | from env | Sampling temperature |
+| `--locale TEXT` | from env | Locale/language for all generated values |
+| `--no-validate` | off | Skip schema validation |
+| `-q, --quiet` | off | Suppress status messages (data only to stdout) |
+
+**Graph file format** (`relationships.yaml`):
+
+```yaml
+customers:
+  context: ecommerce_customer
+  count: 5
+
+orders:
+  context: restaurant_order
+  count: 20
+  parent: customers        # must be generated before orders
+  fk_field: customer_email # field injected into each order record
+  parent_pk: email         # field taken from parent customer records
+  parent_sample_size: 3    # how many parent records shown in AI prompt (default 3)
+  batch_size: 10           # records per AI call for this node (default 10)
+```
+
+**Multi-level chains** work too — just reference the right parent at each level:
+
+```yaml
+customers:
+  context: ecommerce_customer
+  count: 3
+
+orders:
+  context: restaurant_order
+  count: 9
+  parent: customers
+  fk_field: customer_email
+  parent_pk: email
+
+shipments:
+  context: logistics_shipment
+  count: 9
+  parent: orders
+  fk_field: reference_order_id
+  parent_pk: order_id
+```
+
+**Examples:**
+
+```bash
+# Generate from a graph file, output JSON
+testdata-ai generate-related --graph-file examples/ecommerce_graph.yaml
+
+# JSONL format — one line per entity, useful for streaming / jq
+testdata-ai generate-related --graph-file examples/ecommerce_graph.yaml -o jsonl-per-entity
+
+# Pipe orders to jq
+testdata-ai generate-related --graph-file examples/ecommerce_graph.yaml -q \
+    | jq '.orders[] | {id: .order_id, email: .customer_email}'
+
+# Polish locale, 5-record batches
+testdata-ai generate-related --graph-file examples/ecommerce_graph.yaml \
+    --locale pl --batch-size 5
+```
+
+**Output formats:**
+- `json` (default) — `{"customers": [...], "orders": [...]}`
+- `jsonl-per-entity` — one line per entity: `{"entity": "customers", "records": [...]}`
+
+---
+
 ## Python API
 
 ### `DataGenerator`
@@ -408,6 +509,109 @@ for batch in gen.generate_batched("banking_user", count=100, batch_size=20):
 ```
 
 `generate_batched()` / `DataGenerator.generate_batched()` yield `List[Dict[str, Any]]` — one batch per iteration.
+
+---
+
+### `generate_with_relationships()` — Multi-entity datasets
+
+Generate multiple related entity datasets in a single call. The graph is executed in dependency
+order (topological sort), and child prompts include sample parent records so the AI produces
+contextually consistent data — not just FK injection after the fact.
+
+```python
+from testdata_ai import DataGenerator
+
+gen = DataGenerator()
+
+result = gen.generate_with_relationships({
+    "customers": {
+        "context": "ecommerce_customer",
+        "count": 5,
+    },
+    "orders": {
+        "context": "restaurant_order",
+        "count": 20,
+        "parent": "customers",
+        "fk_field": "customer_email",   # field to inject into each order
+        "parent_pk": "email",           # field from parent used as FK value
+        "parent_sample_size": 3,        # parent records shown in AI prompt
+        "batch_size": 10,               # records per AI call (default 10)
+    },
+})
+
+# result["customers"] → List[Dict] — 5 customers
+# result["orders"]    → List[Dict] — 20 orders, each with customer_email set to a real customer email
+
+# FK integrity is always guaranteed (safety-net injection after AI generation)
+customer_emails = {c["email"] for c in result["customers"]}
+assert all(o["customer_email"] in customer_emails for o in result["orders"])
+```
+
+**Three-level chain** — customers → orders → shipments:
+
+```python
+result = gen.generate_with_relationships({
+    "customers": {"context": "ecommerce_customer", "count": 3},
+    "orders": {
+        "context": "restaurant_order", "count": 9,
+        "parent": "customers", "fk_field": "customer_email", "parent_pk": "email",
+    },
+    "shipments": {
+        "context": "logistics_shipment", "count": 9,
+        "parent": "orders", "fk_field": "reference_order_id", "parent_pk": "order_id",
+    },
+})
+```
+
+**Locale support:**
+
+```python
+# All entities generated in Polish
+gen = DataGenerator(locale="pl")
+result = gen.generate_with_relationships({...})
+```
+
+**Module-level convenience function:**
+
+```python
+from testdata_ai import generate_with_relationships
+
+result = generate_with_relationships(
+    {
+        "customers": {"context": "ecommerce_customer", "count": 2},
+        "orders": {
+            "context": "restaurant_order", "count": 6,
+            "parent": "customers", "fk_field": "customer_email", "parent_pk": "email",
+        },
+    },
+    validate=True,
+    locale="ja",
+)
+```
+
+**Graph node fields:**
+
+| Field | Required | Default | Description |
+|---|---|---|---|
+| `context` | yes | — | Registered context identifier |
+| `count` | yes | — | Number of records to generate |
+| `parent` | no | — | Parent node name (makes this a child node) |
+| `fk_field` | when parent set | — | Field to inject into each child record |
+| `parent_pk` | when parent set | — | Field from parent records used as FK value |
+| `parent_sample_size` | no | `3` | Parent records embedded in child AI prompt |
+| `batch_size` | no | `10` | Records per AI call for this node |
+
+**Raises:**
+- `ValueError` — missing required fields, unknown parent reference, or cycle in graph
+- `testdata_ai.contexts.ValidationError` — records missing required fields (when `validate=True`)
+
+**Graph YAML files** — save any graph dict as YAML and use it with the CLI:
+
+```bash
+testdata-ai generate-related --graph-file relationships.yaml
+```
+
+See `examples/ecommerce_graph.yaml` and `examples/relationships.py` for full examples.
 
 ---
 
@@ -969,13 +1173,13 @@ Run `testdata-ai list-contexts` to see all contexts, or `testdata-ai show-contex
 - [x] Faker hybrid mode — `field_providers={"email": "faker:email"}` in `ContextSchema`; optional `testdata-ai[faker]` extra; locale-aware
 - [x] Unique field constraints — `unique_fields=["email", "user_id"]` in `ContextSchema`; uses Faker's uniqueness proxy; per-batch guarantee
 - [x] SQL output format — `-o sql` with `CREATE TABLE IF NOT EXISTS` + `INSERT INTO`; type inference; `--table` override
+- [x] Relationship generation — `generate_with_relationships()` / `generate-related` CLI; graph YAML files; semantic coherence (parent records in child prompt); guaranteed FK integrity; topological sort; batch generation
 
 **Next:**
 - [ ] `/docs` folder — installation, quickstart, CLI reference, API reference, custom contexts, pytest integration
 - [ ] Async API — `async def generate()` / `generate_batched()` for high-throughput pipelines
 - [ ] pandas output — `DataGenerator.to_dataframe()` convenience method
 - [ ] More providers — Google Gemini, Mistral, Cohere
-- [ ] Relationship generation — `generate_with_relationships()` (e.g. customers + matching orders)
 
 ---
 
