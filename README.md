@@ -37,6 +37,7 @@ testdata-ai generate --context ecommerce_customer --count 10
 from testdata_ai import (
     generate, generate_from_model, generate_with_relationships,
     generate_parallel, async_generate, GenerateSpec,
+    generate_as_dataframe, to_dataframe,
 )
 from pydantic import BaseModel
 
@@ -73,6 +74,14 @@ results = asyncio.run(generate_parallel([
 
 # Or generate one context in parallel batches
 records = asyncio.run(async_generate("ecommerce_customer", count=3000, parallelism=5))
+
+# pandas DataFrame — one-liner
+df = generate_as_dataframe("ecommerce_customer", count=50)
+print(df[["name", "email", "loyalty_tier"]].head())
+
+# …or convert any records list
+records = generate("ecommerce_customer", count=20)
+df = to_dataframe(records)
 ```
 
 **Why testdata-ai?**
@@ -85,6 +94,7 @@ records = asyncio.run(async_generate("ecommerce_customer", count=3000, paralleli
 - **Unique field constraints** — add `unique_fields=["email", "user_id"]` to any context and those fields will never duplicate within a batch
 - **Multi-entity datasets** — `generate_with_relationships()` generates customers → orders → shipments with guaranteed FK integrity _and_ semantic coherence (child records make sense given parent records)
 - **Async / parallel generation** — `generate_parallel()` and `async_generate()` run multiple AI calls concurrently via `asyncio`, dramatically reducing wall-clock time for large datasets; cross-call uniqueness guaranteed via Faker dedup
+- **pandas output** — `generate_as_dataframe()` returns a `DataFrame` directly; `to_dataframe()` converts any records list; nested dicts auto-expanded via `pd.json_normalize()`
 
 | | Faker | testdata-ai |
 |---|---|---|
@@ -97,6 +107,7 @@ records = asyncio.run(async_generate("ecommerce_customer", count=3000, paralleli
 | Unique values across records | Requires manual set tracking | `unique_fields=["email", "user_id"]` |
 | Multi-entity FK datasets | Sequential, no semantic link | `generate_with_relationships(graph)` — child records contextually match parents |
 | Large dataset throughput | Single-threaded | `generate_parallel()` / `async_generate()` — concurrent AI calls, N× speedup |
+| DataFrame output | `pd.DataFrame(records)` | `generate_as_dataframe()` / `to_dataframe()` — nested dicts auto-flattened |
 
 **Why not just use Faker?**
 
@@ -131,6 +142,7 @@ country="Japan"
   - [generate\_with\_relationships()](#generate_with_relationships--multi-entity-datasets)
   - [generate\_from\_model()](#generate_from_model--schema-from-pydantic--json-schema)
   - [Async / Parallel Generation](#async--parallel-generation)
+  - [pandas DataFrame output](#pandas-dataframe-output)
 - [Custom Contexts](#custom-contexts)
 - [Faker Hybrid Mode](#faker-hybrid-mode)
   - [Unique Field Constraints](#unique-field-constraints)
@@ -150,7 +162,8 @@ pip install "testdata-ai[gemini]"       # Google Gemini only
 pip install "testdata-ai[mistral]"      # Mistral only
 pip install "testdata-ai[cohere]"       # Cohere only
 pip install "testdata-ai[faker]"        # Faker hybrid mode (format-safe fields)
-pip install "testdata-ai[all]"          # All providers + Faker
+pip install "testdata-ai[pandas]"       # pandas DataFrame output
+pip install "testdata-ai[all]"          # All providers + Faker + pandas
 ```
 
 ### Development install (from source)
@@ -875,6 +888,93 @@ See `examples/async_generation.py` for more patterns including explicit labels, 
 
 ---
 
+### pandas DataFrame output
+
+```bash
+pip install "testdata-ai[pandas]"
+```
+
+Three ways to get a `DataFrame`:
+
+```python
+from testdata_ai import generate, generate_as_dataframe, to_dataframe, DataGenerator, generate_with_relationships
+from testdata_ai.pandas_bridge import relationships_to_dataframes
+
+# 1. One-liner convenience function
+df = generate_as_dataframe("ecommerce_customer", count=50)
+print(df.shape)           # (50, N)
+print(df["email"].head())
+
+# 2. Convert any existing records list
+records = generate("ecommerce_customer", count=20)
+df = to_dataframe(records)
+
+# 3. Via DataGenerator (reuse across calls)
+gen = DataGenerator(provider="anthropic", locale="pl")
+df = gen.generate_as_dataframe("hr_employee", count=100)
+```
+
+**Nested fields** are automatically expanded into dot-separated columns via `pd.json_normalize()`:
+
+```python
+df = generate_as_dataframe("ecommerce_customer", count=5)
+# location.city, location.country, shopping_behavior.frequency, etc. become separate columns
+print([c for c in df.columns if "." in c])
+# ['location.city', 'location.country', 'location.timezone',
+#  'shopping_behavior.frequency', 'shopping_behavior.avg_order_value', ...]
+```
+
+Pass `flatten=False` to keep nested dicts as object-typed cells instead:
+
+```python
+df = generate_as_dataframe("ecommerce_customer", count=5, flatten=False)
+# df["location"] is a column of dicts
+```
+
+**Multi-entity datasets** — convert a `generate_with_relationships()` result to a dict of DataFrames:
+
+```python
+result = generate_with_relationships({
+    "customers": {"context": "ecommerce_customer", "count": 3},
+    "orders": {
+        "context": "restaurant_order", "count": 9,
+        "parent": "customers", "fk_field": "customer_email", "parent_pk": "email",
+    },
+})
+
+dfs = relationships_to_dataframes(result)
+# dfs["customers"] → DataFrame(3 rows)
+# dfs["orders"]    → DataFrame(9 rows)
+
+merged = dfs["orders"].merge(
+    dfs["customers"][["email", "name"]],
+    left_on="customer_email", right_on="email", how="left",
+)
+```
+
+**`generate_as_dataframe()` parameters:**
+
+| Parameter | Default | Description |
+|---|---|---|
+| `context` | — | Context identifier |
+| `count` | `10` | Number of records |
+| `validate` | `True` | Run schema validation |
+| `locale` | `None` | BCP 47 locale tag |
+| `flatten` | `True` | Expand nested dicts with `pd.json_normalize()` |
+
+**`to_dataframe()` / `records_to_dataframe()` parameters:**
+
+| Parameter | Default | Description |
+|---|---|---|
+| `records` | — | `List[Dict]` from any `generate*()` call |
+| `flatten` | `True` | Expand nested dicts with `pd.json_normalize()` |
+
+**Raises:** `ImportError` (with install hint) if `pandas` is not installed.
+
+See `examples/pandas_output.py` for more patterns including locale-aware generation and join examples.
+
+---
+
 ### `list_contexts()` / `get_context_schema()`
 
 ```python
@@ -1354,10 +1454,10 @@ Run `testdata-ai list-contexts` to see all contexts, or `testdata-ai show-contex
 - [x] Relationship generation — `generate_with_relationships()` / `generate-related` CLI; graph YAML files; semantic coherence (parent records in child prompt); guaranteed FK integrity; topological sort; batch generation
 - [x] Async / parallel generation — `generate_parallel()` / `async_generate()` / `GenerateSpec`; asyncio + thread pool; cross-call Faker dedup via `global_unique_fields`; semaphore concurrency cap
 - [x] More providers — Google Gemini (`gemini-2.0-flash`), Mistral (`mistral-small-latest`), Cohere (`command-r`)
+- [x] pandas output — `generate_as_dataframe()` / `to_dataframe()` / `relationships_to_dataframes()`; nested dicts auto-flattened via `json_normalize`; optional `testdata-ai[pandas]` extra
 
 **Next:**
 - [ ] `/docs` folder — installation, quickstart, CLI reference, API reference, custom contexts, pytest integration
-- [ ] pandas output — `DataGenerator.to_dataframe()` convenience method
 
 ---
 

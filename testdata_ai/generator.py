@@ -3,7 +3,7 @@ Core test data generator - provider agnostic.
 Supports OpenAI, Anthropic, and other AI providers.
 """
 
-__all__ = ["DataGenerator", "generate", "generate_batched", "generate_from_model", "generate_with_relationships"]
+__all__ = ["DataGenerator", "generate", "generate_batched", "generate_from_model", "generate_with_relationships", "generate_as_dataframe"]
 
 import json
 import math
@@ -430,6 +430,37 @@ class DataGenerator:
 
         return result
 
+    def generate_as_dataframe(
+        self,
+        context: str,
+        count: int = 10,
+        validate: bool = True,
+        flatten: bool = True,
+    ):
+        """Generate test data and return it as a pandas DataFrame.
+
+        Convenience wrapper around ``generate()`` + ``records_to_dataframe()``.
+
+        Args:
+            context: Context name (e.g. ``'ecommerce_customer'``).
+            count: Number of records to generate.
+            validate: Whether to validate against schema (default: True).
+            flatten: If ``True`` (default), nested dicts are expanded into
+                dot-separated column names via ``pd.json_normalize()``.
+                If ``False``, nested objects are kept as object-typed cells.
+
+        Returns:
+            ``pandas.DataFrame`` with one row per generated record.
+
+        Raises:
+            ImportError: If ``pandas`` is not installed.
+            ValueError: If context is unknown or AI response is not valid JSON.
+            ValidationError: If generated records fail schema validation.
+        """
+        from testdata_ai.pandas_bridge import records_to_dataframe
+        records = self.generate(context, count=count, validate=validate)
+        return records_to_dataframe(records, flatten=flatten)
+
 
 def _parse_ai_response(raw: str) -> List[Dict[str, Any]]:
     """Parse and normalize an AI JSON response to a list of records."""
@@ -545,6 +576,28 @@ def generate_with_relationships(
         >>> result["orders"]  # 10 order records, each with user_id from a customer email
     """
     return DataGenerator(locale=locale).generate_with_relationships(graph, validate=validate)
+
+
+def generate_as_dataframe(
+    context: str,
+    count: int = 10,
+    validate: bool = True,
+    locale: Optional[str] = None,
+    flatten: bool = True,
+):
+    """Convenience function: generate and return as a pandas DataFrame.
+
+    Creates a new DataGenerator each call. For repeated use, instantiate
+    DataGenerator directly and call generate_as_dataframe() on it.
+
+    Example:
+        >>> from testdata_ai import generate_as_dataframe
+        >>> df = generate_as_dataframe('ecommerce_customer', count=20)
+        >>> df['email'].value_counts()
+    """
+    from testdata_ai.pandas_bridge import records_to_dataframe
+    records = DataGenerator(locale=locale).generate(context, count=count, validate=validate)
+    return records_to_dataframe(records, flatten=flatten)
 
 
 def generate(
