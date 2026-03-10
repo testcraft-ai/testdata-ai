@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-03-10
+
+### Added
+- **pandas DataFrame output** — `generate_as_dataframe(context, count)` generates records and returns
+  a `pandas.DataFrame` directly; `to_dataframe(records)` / `records_to_dataframe(records)` convert
+  any `List[Dict]` output; `relationships_to_dataframes(result)` converts `generate_with_relationships()`
+  output to a `Dict[str, DataFrame]`
+- `testdata_ai/pandas_bridge.py`: `records_to_dataframe()`, `relationships_to_dataframes()`,
+  `_require_pandas()` with a clear install-hint `ImportError`
+- `DataGenerator.generate_as_dataframe()` method and module-level `generate_as_dataframe()` function
+- `flatten=True` (default) uses `pd.json_normalize()` to expand nested dicts into dot-separated
+  column names (e.g. `location.city`); `flatten=False` uses `pd.DataFrame()` to keep nested objects
+  as object-typed cells
+- `to_dataframe` alias exported from top-level `testdata_ai` package (available when pandas is installed)
+- New optional dependency extra `[pandas]` (`pandas>=1.3.0`); pandas included in `[all]` and `[dev]`
+- `tests/generator/test_pandas_bridge.py` — 23 unit tests (pandas calls mocked via `patch`)
+- `examples/pandas_output.py` — 5 usage patterns (flat records, one-liner, DataGenerator method,
+  nested fields with flatten control, multi-entity join)
+
 ## [0.10.0] - 2026-03-10
 
 ### Added
