@@ -13,7 +13,12 @@ from typing import Optional
 from testdata_ai.contexts import ContextSchema, get_context_schema
 
 
-def _build_prompt(schema: ContextSchema, count: int, locale: Optional[str] = None) -> str:
+def _build_prompt(
+    schema: ContextSchema,
+    count: int,
+    locale: Optional[str] = None,
+    batch_id: Optional[str] = None,
+) -> str:
     """Build a prompt from a ContextSchema object."""
     hints = "\n".join(f"- {hint}" for hint in schema.prompt_hints)
     sample_json = json.dumps(schema.sample, indent=2)
@@ -25,10 +30,17 @@ def _build_prompt(schema: ContextSchema, count: int, locale: Optional[str] = Non
         if locale else ""
     )
 
+    batch_instruction = (
+        f"Use batch identifier '{batch_id}' to ensure uniqueness. "
+        f"Generate values distinct from any other batch with a different identifier.\n\n"
+        if batch_id else ""
+    )
+
     return (
         f"Generate exactly {count} realistic {schema.description}.\n"
         f"\n"
         f"{locale_instruction}"
+        f"{batch_instruction}"
         f"Return a JSON object with a \"data\" key containing an array "
         f"of exactly {count} objects. Example: {{\"data\": [...]}}\n"
         f"\n"
@@ -40,7 +52,12 @@ def _build_prompt(schema: ContextSchema, count: int, locale: Optional[str] = Non
     )
 
 
-def get_prompt(context: str, count: int, locale: Optional[str] = None) -> str:
+def get_prompt(
+    context: str,
+    count: int,
+    locale: Optional[str] = None,
+    batch_id: Optional[str] = None,
+) -> str:
     """Build a prompt for the given context and record count.
 
     Args:
@@ -49,6 +66,10 @@ def get_prompt(context: str, count: int, locale: Optional[str] = None) -> str:
         locale: BCP 47 locale tag for generated values (e.g. 'pl', 'ja').
             When None, no locale instruction is added and the AI produces
             English data by default.
+        batch_id: Optional short identifier (e.g. 8-char hex UUID prefix)
+            injected into the prompt to statistically encourage the AI to
+            generate values distinct from other batches. Has no effect
+            when None (default single-call behaviour is unchanged).
 
     Returns:
         Formatted prompt string ready to send to AI
@@ -57,4 +78,4 @@ def get_prompt(context: str, count: int, locale: Optional[str] = None) -> str:
         ValueError: If context is unknown
     """
     schema = get_context_schema(context)
-    return _build_prompt(schema, count, locale)
+    return _build_prompt(schema, count, locale, batch_id=batch_id)

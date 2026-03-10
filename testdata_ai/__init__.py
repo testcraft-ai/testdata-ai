@@ -8,6 +8,7 @@ except PackageNotFoundError:
     __version__ = "0.0.0-dev"
 
 from testdata_ai.generator import DataGenerator, generate, generate_from_model, generate_with_relationships
+from testdata_ai.async_generator import generate_parallel, async_generate, GenerateSpec
 from testdata_ai.contexts import (
     ContextSchema,
     list_contexts,
@@ -21,6 +22,9 @@ __all__ = [
     "generate",
     "generate_from_model",
     "generate_with_relationships",
+    "generate_parallel",
+    "async_generate",
+    "GenerateSpec",
     "ContextSchema",
     "list_contexts",
     "get_context_schema",

@@ -34,7 +34,10 @@ testdata-ai generate --context ecommerce_customer --count 10
 ```
 
 ```python
-from testdata_ai import generate, generate_from_model, generate_with_relationships
+from testdata_ai import (
+    generate, generate_from_model, generate_with_relationships,
+    generate_parallel, async_generate, GenerateSpec,
+)
 from pydantic import BaseModel
 
 # Built-in context
@@ -57,6 +60,19 @@ result = generate_with_relationships({
     },
 })
 # result["orders"][*]["customer_email"] is always a real customer email
+
+# Async parallel: generate multiple contexts simultaneously
+import asyncio
+
+results = asyncio.run(generate_parallel([
+    GenerateSpec("ecommerce_customer", count=500, label="customers"),
+    GenerateSpec("banking_user",        count=500, label="accounts"),
+    GenerateSpec("iot_device",          count=500, label="devices"),
+]))
+# all 3 AI calls run concurrently — much faster than sequential generate()
+
+# Or generate one context in parallel batches
+records = asyncio.run(async_generate("ecommerce_customer", count=3000, parallelism=5))
 ```
 
 **Why testdata-ai?**
@@ -68,6 +84,7 @@ result = generate_with_relationships({
 - **Faker hybrid mode** — mark fields as `faker:email` / `faker:iban` to get format-guaranteed values while AI handles the semantic context
 - **Unique field constraints** — add `unique_fields=["email", "user_id"]` to any context and those fields will never duplicate within a batch
 - **Multi-entity datasets** — `generate_with_relationships()` generates customers → orders → shipments with guaranteed FK integrity _and_ semantic coherence (child records make sense given parent records)
+- **Async / parallel generation** — `generate_parallel()` and `async_generate()` run multiple AI calls concurrently via `asyncio`, dramatically reducing wall-clock time for large datasets; cross-call uniqueness guaranteed via Faker dedup
 
 | | Faker | testdata-ai |
 |---|---|---|
@@ -79,6 +96,7 @@ result = generate_with_relationships({
 | Format-safe critical fields | ✅ Faker's domain | `field_providers={"email": "faker:email"}` |
 | Unique values across records | Requires manual set tracking | `unique_fields=["email", "user_id"]` |
 | Multi-entity FK datasets | Sequential, no semantic link | `generate_with_relationships(graph)` — child records contextually match parents |
+| Large dataset throughput | Single-threaded | `generate_parallel()` / `async_generate()` — concurrent AI calls, N× speedup |
 
 **Why not just use Faker?**
 
@@ -112,6 +130,7 @@ country="Japan"
 - [Python API](#python-api)
   - [generate\_with\_relationships()](#generate_with_relationships--multi-entity-datasets)
   - [generate\_from\_model()](#generate_from_model--schema-from-pydantic--json-schema)
+  - [Async / Parallel Generation](#async--parallel-generation)
 - [Custom Contexts](#custom-contexts)
 - [Faker Hybrid Mode](#faker-hybrid-mode)
   - [Unique Field Constraints](#unique-field-constraints)
@@ -697,6 +716,135 @@ print(cs.prompt_hints)   # ['email: Valid email address', 'age: Age in years', '
 
 ---
 
+### Async / Parallel Generation
+
+Run multiple AI calls concurrently using `asyncio`. Blocking provider calls are offloaded to a thread pool via `asyncio.to_thread` (Python 3.9+), so the standard synchronous providers work unchanged.
+
+```python
+import asyncio
+from testdata_ai import generate_parallel, async_generate, GenerateSpec
+```
+
+#### `generate_parallel()` — multiple contexts at once
+
+```python
+results = await generate_parallel([
+    GenerateSpec("ecommerce_customer", count=500, label="customers"),
+    GenerateSpec("banking_user",        count=500, label="accounts"),
+    GenerateSpec("iot_device",          count=500, label="devices"),
+])
+# All 3 AI calls run concurrently
+# results["customers"] → List[Dict] (500 records)
+# results["accounts"]  → List[Dict] (500 records)
+# results["devices"]   → List[Dict] (500 records)
+
+asyncio.run(main())  # or await inside an existing async context
+```
+
+**Result keying:**
+- When `label` is set, results are stored under that label.
+- When `label` is `None` and multiple specs share the same context, their results are **merged** under the context name:
+
+```python
+results = await generate_parallel([
+    GenerateSpec("ecommerce_customer", 1000),
+    GenerateSpec("ecommerce_customer", 1000),
+    GenerateSpec("ecommerce_customer", 1000),
+])
+records = results["ecommerce_customer"]  # ~3000 merged records
+```
+
+**Cross-call uniqueness** — requires `pip install testdata-ai[faker]`:
+
+```python
+results = await generate_parallel(
+    [
+        GenerateSpec("ecommerce_customer", count=500, label="segment_a"),
+        GenerateSpec("ecommerce_customer", count=500, label="segment_b"),
+    ],
+    global_unique_fields=["email"],   # no duplicate emails across both segments
+)
+```
+
+Two uniqueness layers:
+1. **Prompt injection** (statistical): each task gets a unique `batch_id` injected into its prompt
+2. **Faker dedup** (guaranteed): when `global_unique_fields` is set, confirmed duplicates are replaced with Faker-generated values
+
+**`GenerateSpec` fields:**
+
+| Field | Required | Default | Description |
+|---|---|---|---|
+| `context` | yes | — | Context identifier |
+| `count` | yes | — | Number of records |
+| `locale` | no | `None` | BCP 47 locale tag (overrides `AI_LOCALE`) |
+| `validate` | no | `False` | Run schema validation on results |
+| `label` | no | `None` | Custom key in the results dict; `None` → merge by context name |
+
+#### `async_generate()` — single context, parallel batches
+
+Convenience wrapper for generating many records from one context by splitting into parallel batches:
+
+```python
+# 3000 records, 3 concurrent batches (default: ceil(count/parallelism) per batch)
+records = await async_generate("ecommerce_customer", count=3000, parallelism=3)
+
+# 9000 records: batches of 1000, max 3 concurrent (3 waves of 3)
+records = await async_generate(
+    "ecommerce_customer",
+    count=9000,
+    parallelism=3,
+    batch_size=1000,
+    global_unique_fields=["email"],   # unique emails across all batches
+)
+
+# Locale-aware
+records = await async_generate("ecommerce_customer", count=500, parallelism=5, locale="pl")
+```
+
+**`async_generate()` parameters:**
+
+| Parameter | Default | Description |
+|---|---|---|
+| `context` | — | Context identifier |
+| `count` | — | Total records to generate |
+| `parallelism` | `3` | Max concurrent AI calls (semaphore limit) |
+| `batch_size` | `ceil(count/parallelism)` | Records per AI call |
+| `locale` | `None` | BCP 47 locale tag |
+| `global_unique_fields` | `None` | Fields to deduplicate across all batches (requires Faker) |
+| `provider` | from env | AI provider name |
+
+**Full working example:**
+
+```python
+import asyncio
+from testdata_ai import generate_parallel, async_generate, GenerateSpec
+
+async def main():
+    # Multi-context parallel
+    results = await generate_parallel([
+        GenerateSpec("ecommerce_customer", count=100, label="buyers"),
+        GenerateSpec("banking_user",        count=50,  label="accounts"),
+    ], global_unique_fields=["email"])
+
+    print(f"buyers:   {len(results['buyers'])} records")
+    print(f"accounts: {len(results['accounts'])} records")
+
+    # Single-context high-throughput
+    records = await async_generate("hr_employee", count=1000, parallelism=5)
+    print(f"employees: {len(records)} records")
+
+asyncio.run(main())
+```
+
+See `examples/async_generation.py` for more patterns including explicit labels, locale-aware parallel generation, and concurrency wave control.
+
+**Raises:**
+- `ValueError` — empty specs list, `count < 1`, or `parallelism < 1`
+- `ImportError` — `global_unique_fields` set but `faker` not installed
+- `RuntimeError` / `ValidationError` — propagated from any failed task
+
+---
+
 ### `list_contexts()` / `get_context_schema()`
 
 ```python
@@ -1174,10 +1322,10 @@ Run `testdata-ai list-contexts` to see all contexts, or `testdata-ai show-contex
 - [x] Unique field constraints — `unique_fields=["email", "user_id"]` in `ContextSchema`; uses Faker's uniqueness proxy; per-batch guarantee
 - [x] SQL output format — `-o sql` with `CREATE TABLE IF NOT EXISTS` + `INSERT INTO`; type inference; `--table` override
 - [x] Relationship generation — `generate_with_relationships()` / `generate-related` CLI; graph YAML files; semantic coherence (parent records in child prompt); guaranteed FK integrity; topological sort; batch generation
+- [x] Async / parallel generation — `generate_parallel()` / `async_generate()` / `GenerateSpec`; asyncio + thread pool; cross-call Faker dedup via `global_unique_fields`; semaphore concurrency cap
 
 **Next:**
 - [ ] `/docs` folder — installation, quickstart, CLI reference, API reference, custom contexts, pytest integration
-- [ ] Async API — `async def generate()` / `generate_batched()` for high-throughput pipelines
 - [ ] pandas output — `DataGenerator.to_dataframe()` convenience method
 - [ ] More providers — Google Gemini, Mistral, Cohere
 
