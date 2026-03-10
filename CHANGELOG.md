@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-03-10
+
+### Added
+- **Async / parallel generation** — `generate_parallel(specs)` and `async_generate(context, count)`
+  run multiple AI provider calls concurrently via `asyncio` + `asyncio.to_thread`; blocking
+  synchronous providers work unchanged; all three providers (OpenAI, Anthropic, Ollama) supported
+- `testdata_ai/async_generator.py`: `GenerateSpec` dataclass, `generate_parallel()`,
+  `async_generate()`, `_UniqueFieldManager` for cross-call deduplication
+- **Two-layer uniqueness** for parallel generation:
+  1. *Prompt injection* (statistical) — each task receives a unique 8-char `batch_id` injected into
+     its prompt to reduce duplicate values across concurrent AI calls
+  2. *Faker dedup* (guaranteed) — `global_unique_fields` parameter triggers a post-generation pass
+     that replaces confirmed cross-call duplicates using Faker; requires `testdata-ai[faker]`
+- `async_generate()` splits a single large count into parallel batches; `parallelism` caps concurrent
+  AI calls via an `asyncio.Semaphore`; `batch_size` controls records per AI call
+- `generate_parallel()` merges results from specs with the same context name (no `label`) and keeps
+  them separate when `label` is set
+- `GenerateSpec`, `generate_parallel`, `async_generate` exported from top-level `testdata_ai` package
+- `examples/async_generation.py` — 6 usage patterns (multi-context, single-context merge, batching,
+  unique fields, explicit labels, locale-aware parallel)
+- `tests/generator/test_async_generator.py` — 49 unit tests (all AI calls mocked)
+- `prompts.py`: `get_prompt()` and `_build_prompt()` accept an optional `batch_id` parameter
+  (backward-compatible default `None`)
+- `pytest-asyncio>=0.21` added to dev dependencies; `asyncio_mode = "auto"` in `[tool.pytest.ini_options]`
+
 ## [0.8.0] - 2026-03-09
 
 ### Added
