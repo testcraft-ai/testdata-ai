@@ -78,7 +78,7 @@ records = asyncio.run(async_generate("ecommerce_customer", count=3000, paralleli
 **Why testdata-ai?**
 
 - **13 built-in domains** — e-commerce, banking, healthcare, HR, IoT, travel, and more
-- **3 AI providers** — OpenAI, Anthropic, or a local Ollama model (no API cost)
+- **6 AI providers** — OpenAI, Anthropic, Google Gemini, Mistral, Cohere, or a local Ollama model (no API cost)
 - **pytest plugin** — session-scoped fixtures with caching, named seeds, and xdist support, auto-loaded
 - **Pydantic / JSON Schema support** — generate data directly from your existing models
 - **Faker hybrid mode** — mark fields as `faker:email` / `faker:iban` to get format-guaranteed values while AI handles the semantic context
@@ -146,6 +146,9 @@ country="Japan"
 pip install "testdata-ai[openai]"       # OpenAI only
 pip install "testdata-ai[anthropic]"    # Anthropic only
 pip install "testdata-ai[ollama]"       # Ollama only (no extra packages — uses stdlib)
+pip install "testdata-ai[gemini]"       # Google Gemini only
+pip install "testdata-ai[mistral]"      # Mistral only
+pip install "testdata-ai[cohere]"       # Cohere only
 pip install "testdata-ai[faker]"        # Faker hybrid mode (format-safe fields)
 pip install "testdata-ai[all]"          # All providers + Faker
 ```
@@ -167,7 +170,7 @@ Create a `.env` file in the project root:
 
 ```bash
 # Provider selection
-AI_PROVIDER=openai          # openai | anthropic | ollama
+AI_PROVIDER=openai          # openai | anthropic | ollama | gemini | mistral | cohere
 
 # OpenAI
 OPENAI_API_KEY=sk-proj-...
@@ -186,6 +189,24 @@ OLLAMA_BASE_URL=http://localhost:11434  # default
 OLLAMA_MODEL=qwen2.5:14b               # default
 OLLAMA_MAX_TOKENS=4096
 OLLAMA_TEMPERATURE=0.7
+
+# Google Gemini
+GEMINI_API_KEY=...
+GEMINI_MODEL=gemini-2.0-flash          # default
+GEMINI_MAX_TOKENS=4096
+GEMINI_TEMPERATURE=0.7
+
+# Mistral
+MISTRAL_API_KEY=...
+MISTRAL_MODEL=mistral-small-latest     # default
+MISTRAL_MAX_TOKENS=4096
+MISTRAL_TEMPERATURE=0.7
+
+# Cohere
+COHERE_API_KEY=...
+COHERE_MODEL=command-r                 # default
+COHERE_MAX_TOKENS=4096
+COHERE_TEMPERATURE=0.7
 ```
 
 ```bash
@@ -193,7 +214,7 @@ OLLAMA_TEMPERATURE=0.7
 AI_LOCALE=pl   # BCP 47 tag; overridden by --locale or locale= per call
 ```
 
-All env vars are optional except `*_API_KEY` (Ollama requires no API key). Defaults: `gpt-4o-mini` / `claude-haiku-4-5-20251001` / `qwen2.5:14b`, temperature `0.7`, max_tokens `4096`.
+All env vars are optional except `*_API_KEY` (Ollama requires no API key). Defaults: `gpt-4o-mini` / `claude-haiku-4-5-20251001` / `qwen2.5:14b` / `gemini-2.0-flash` / `mistral-small-latest` / `command-r`, temperature `0.7`, max_tokens `4096`.
 
 ---
 
@@ -218,7 +239,7 @@ testdata-ai generate --schema-file <path> [OPTIONS]
 | `--batch-size INTEGER` | `10` | Records per AI call. For `count > batch-size`, records are output progressively |
 | `-o, --output [json\|jsonl\|csv\|yaml\|sql]` | `json` | Output format. Write to file via shell redirection: `-o csv > data.csv` |
 | `--table TEXT` | context name | Table name for SQL output |
-| `--provider TEXT` | from env | AI provider override (`openai` / `anthropic` / `ollama`) |
+| `--provider TEXT` | from env | AI provider override (`openai` / `anthropic` / `ollama` / `gemini` / `mistral` / `cohere`) |
 | `--model TEXT` | from env | Model name override |
 | `--max-tokens INTEGER` | from env | Max tokens per AI call (auto-adjusted to `batch-size` by default) |
 | `--temperature FLOAT` | from env | Sampling temperature `0.0–1.0` |
@@ -247,6 +268,12 @@ testdata-ai generate --context ecommerce_customer --count 100 --batch-size 20 -o
 
 # Use Anthropic instead of the default provider
 testdata-ai generate --context banking_user --count 5 --provider anthropic
+
+# Use Google Gemini
+testdata-ai generate --context ecommerce_customer --count 10 --provider gemini
+
+# Use Mistral
+testdata-ai generate --context saas_trial --count 10 --provider mistral
 
 # Use a local Ollama model
 testdata-ai generate --context ecommerce_customer --count 10 --provider ollama
@@ -449,10 +476,13 @@ gen = DataGenerator()
 
 # Explicit provider
 gen = DataGenerator(provider="anthropic")
+gen = DataGenerator(provider="gemini")
+gen = DataGenerator(provider="mistral")
+gen = DataGenerator(provider="cohere")
 
 # Local Ollama model (no API key needed)
 gen = DataGenerator(provider="ollama")
-gen = DataGenerator(provider="ollama", model="mistral:latest")
+gen = DataGenerator(provider="ollama", model="llama3.2:latest")
 
 # Full control
 gen = DataGenerator(
@@ -1301,7 +1331,7 @@ Run `testdata-ai list-contexts` to see all contexts, or `testdata-ai show-contex
 ## Development Roadmap
 
 **Done:**
-- [x] OpenAI + Anthropic + Ollama provider-agnostic architecture
+- [x] OpenAI + Anthropic + Ollama + Gemini + Mistral + Cohere provider-agnostic architecture
 - [x] 13 built-in contexts across 13 categories
 - [x] Schema validation with missing-field reporting
 - [x] CLI (`generate`, `list-contexts`, `show-context`, `list-models`) with JSON, JSONL, CSV, YAML, and SQL output
@@ -1323,11 +1353,11 @@ Run `testdata-ai list-contexts` to see all contexts, or `testdata-ai show-contex
 - [x] SQL output format — `-o sql` with `CREATE TABLE IF NOT EXISTS` + `INSERT INTO`; type inference; `--table` override
 - [x] Relationship generation — `generate_with_relationships()` / `generate-related` CLI; graph YAML files; semantic coherence (parent records in child prompt); guaranteed FK integrity; topological sort; batch generation
 - [x] Async / parallel generation — `generate_parallel()` / `async_generate()` / `GenerateSpec`; asyncio + thread pool; cross-call Faker dedup via `global_unique_fields`; semaphore concurrency cap
+- [x] More providers — Google Gemini (`gemini-2.0-flash`), Mistral (`mistral-small-latest`), Cohere (`command-r`)
 
 **Next:**
 - [ ] `/docs` folder — installation, quickstart, CLI reference, API reference, custom contexts, pytest integration
 - [ ] pandas output — `DataGenerator.to_dataframe()` convenience method
-- [ ] More providers — Google Gemini, Mistral, Cohere
 
 ---
 

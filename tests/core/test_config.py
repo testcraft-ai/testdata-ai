@@ -115,7 +115,7 @@ class TestGetProviderConfig:
     @pytest.mark.usefixtures("clean_ai_env_fixture")
     def test_raises_for_unsupported_provider(self):
         with pytest.raises(ValueError, match="Unsupported AI provider"):
-            get_provider_config("mistral")
+            get_provider_config("fakeai")
 
     @pytest.mark.usefixtures("clean_ai_env_fixture")
     def test_raises_when_api_key_missing(self):

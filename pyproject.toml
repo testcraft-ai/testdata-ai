@@ -36,8 +36,11 @@ dependencies = [
 openai = ["openai>=1.10.0"]
 anthropic = ["anthropic>=0.18.0"]
 ollama = []  # No extra packages needed — uses stdlib urllib.request; requires a running Ollama instance
+gemini = ["google-genai>=0.7.0"]
+mistral = ["mistralai>=1.0.0"]
+cohere = ["cohere>=5.0.0"]
 faker = ["faker>=18.0"]
-all = ["openai>=1.10.0", "anthropic>=0.18.0", "faker>=18.0"]
+all = ["openai>=1.10.0", "anthropic>=0.18.0", "google-genai>=0.7.0", "mistralai>=1.0.0", "cohere>=5.0.0", "faker>=18.0"]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21",

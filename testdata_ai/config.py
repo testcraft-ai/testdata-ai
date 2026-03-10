@@ -16,6 +16,9 @@ DEFAULT_MODELS = {
     "openai": "gpt-4o-mini",
     "anthropic": "claude-haiku-4-5-20251001",
     "ollama": "qwen2.5:14b",
+    "gemini": "gemini-2.0-flash",
+    "mistral": "mistral-small-latest",
+    "cohere": "command-r",
 }
 
 

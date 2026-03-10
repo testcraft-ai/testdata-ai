@@ -121,7 +121,7 @@ class TestGeneratorInit:
 
     def test_raises_for_unsupported_provider_with_api_key(self):
         with pytest.raises(ValueError, match="Unsupported AI provider"):
-            DataGenerator(api_key="sk-test", provider="mistral")
+            DataGenerator(api_key="sk-test", provider="fakeai")
 
     def test_init_with_explicit_api_key_and_model(self):
         with patch("testdata_ai.generator.get_provider") as mock_get_prov:

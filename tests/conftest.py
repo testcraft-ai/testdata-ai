@@ -5,7 +5,10 @@ from unittest.mock import patch, MagicMock
 import pytest
 from click.testing import CliRunner
 
-from testdata_ai.ai_providers import OpenAIProvider, AnthropicProvider, OllamaProvider
+from testdata_ai.ai_providers import (
+    OpenAIProvider, AnthropicProvider, OllamaProvider,
+    GeminiProvider, MistralProvider, CohereProvider,
+)
 from testdata_ai.contexts import ContextSchema
 from testdata_ai.generator import DataGenerator
 
@@ -81,6 +84,38 @@ def ollama_provider_mock():
     provider._use_json_format = True    # keep format assertions passing
     provider._sleep = lambda s: None    # no real sleep in tests
     return provider, mock_urllib
+
+
+@pytest.fixture
+def gemini_provider_mock():
+    """Create a GeminiProvider with a mocked client and types module."""
+    with patch.object(GeminiProvider, "_init_client"):
+        provider = GeminiProvider("gemini-fake-key", "gemini-2.0-flash", 0.7, 4096)
+    mock_client = MagicMock()
+    mock_types = MagicMock()
+    provider.client = mock_client
+    provider._types = mock_types
+    return provider, mock_client, mock_types
+
+
+@pytest.fixture
+def mistral_provider_mock():
+    """Create a MistralProvider with a mocked client."""
+    with patch.object(MistralProvider, "_init_client"):
+        provider = MistralProvider("mistral-fake-key", "mistral-small-latest", 0.7, 4096)
+    mock_client = MagicMock()
+    provider.client = mock_client
+    return provider, mock_client
+
+
+@pytest.fixture
+def cohere_provider_mock():
+    """Create a CohereProvider with a mocked client."""
+    with patch.object(CohereProvider, "_init_client"):
+        provider = CohereProvider("cohere-fake-key", "command-r", 0.7, 4096)
+    mock_client = MagicMock()
+    provider.client = mock_client
+    return provider, mock_client
 
 
 @pytest.fixture

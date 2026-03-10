@@ -7,6 +7,9 @@ from testdata_ai.ai_providers import (
     OpenAIProvider,
     AnthropicProvider,
     OllamaProvider,
+    GeminiProvider,
+    MistralProvider,
+    CohereProvider,
     get_provider,
     DEFAULT_SYSTEM_PROMPT,
 )
@@ -35,9 +38,24 @@ class TestGetProvider:
             provider = get_provider("ollama", "ollama", "qwen2.5:14b", 0.7, 4096)
         assert isinstance(provider, OllamaProvider)
 
+    def test_returns_gemini_provider(self):
+        with patch.object(GeminiProvider, "_init_client"):
+            provider = get_provider("gemini", "gemini-key", "gemini-2.0-flash", 0.7, 4096)
+        assert isinstance(provider, GeminiProvider)
+
+    def test_returns_mistral_provider(self):
+        with patch.object(MistralProvider, "_init_client"):
+            provider = get_provider("mistral", "mistral-key", "mistral-small-latest", 0.7, 4096)
+        assert isinstance(provider, MistralProvider)
+
+    def test_returns_cohere_provider(self):
+        with patch.object(CohereProvider, "_init_client"):
+            provider = get_provider("cohere", "cohere-key", "command-r", 0.7, 4096)
+        assert isinstance(provider, CohereProvider)
+
     def test_raises_for_unknown_provider(self):
-        with pytest.raises(ValueError, match="Unsupported provider: 'mistral'"):
-            get_provider("mistral", "key", "model", 0.7, 4096)
+        with pytest.raises(ValueError, match="Unsupported provider: 'fakeai'"):
+            get_provider("fakeai", "key", "model", 0.7, 4096)
 
     def test_sets_model_and_params(self):
         with patch.object(OpenAIProvider, "_init_client"):

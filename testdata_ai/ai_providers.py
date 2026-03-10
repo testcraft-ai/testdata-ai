@@ -276,10 +276,106 @@ class OllamaProvider(AIProvider):
         return [m["name"] for m in data.get("models", [])]
 
 
+class GeminiProvider(AIProvider):
+    """Google Gemini provider (gemini-2.0-flash, etc.)"""
+
+    def _init_client(self, api_key: str) -> None:
+        try:
+            from google import genai
+            from google.genai import types
+        except ImportError:
+            raise ImportError("google-genai package is required: pip install google-genai")
+        self.client = genai.Client(api_key=api_key)
+        # Store types on instance so tests can mock it without the package installed.
+        self._types = types
+
+    def generate(self, prompt: str, system_prompt: str = DEFAULT_SYSTEM_PROMPT) -> str:
+        config = self._types.GenerateContentConfig(
+            system_instruction=system_prompt or None,
+            temperature=self.temperature,
+            max_output_tokens=self.max_tokens,
+            response_mime_type="application/json",
+        )
+        try:
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config=config,
+            )
+        except Exception as e:
+            self._handle_api_error(e)
+        if not response.text:
+            raise RuntimeError("Gemini returned an empty response")
+        return response.text
+
+
+class MistralProvider(AIProvider):
+    """Mistral AI provider (mistral-small, mistral-large, etc.)"""
+
+    def _init_client(self, api_key: str) -> None:
+        try:
+            from mistralai import Mistral
+        except ImportError:
+            raise ImportError("mistralai package is required: pip install mistralai")
+        self.client = Mistral(api_key=api_key)
+
+    def generate(self, prompt: str, system_prompt: str = DEFAULT_SYSTEM_PROMPT) -> str:
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        try:
+            response = self.client.chat.complete(
+                model=self.model,
+                messages=messages,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                response_format={"type": "json_object"},
+            )
+        except Exception as e:
+            self._handle_api_error(e)
+        content = response.choices[0].message.content
+        if content is None:
+            raise RuntimeError("Mistral returned an empty response")
+        return content
+
+
+class CohereProvider(AIProvider):
+    """Cohere provider (command-r, command-r-plus, etc.)"""
+
+    def _init_client(self, api_key: str) -> None:
+        try:
+            import cohere
+        except ImportError:
+            raise ImportError("cohere package is required: pip install cohere")
+        self.client = cohere.ClientV2(api_key=api_key)
+
+    def generate(self, prompt: str, system_prompt: str = DEFAULT_SYSTEM_PROMPT) -> str:
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        try:
+            response = self.client.chat(
+                model=self.model,
+                messages=messages,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+            )
+        except Exception as e:
+            self._handle_api_error(e)
+        if not response.message.content:
+            raise RuntimeError("Cohere returned an empty response")
+        return response.message.content[0].text
+
+
 _PROVIDERS = {
     "openai": OpenAIProvider,
     "anthropic": AnthropicProvider,
     "ollama": OllamaProvider,
+    "gemini": GeminiProvider,
+    "mistral": MistralProvider,
+    "cohere": CohereProvider,
 }
 
 
