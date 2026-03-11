@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-03-11
+
+### Added
+- **Rich result types** — `GenerateResult` and `RelationshipResult` wrap list output with
+  a list-like interface and conversion helpers: `.to_dataframe()`, `.to_csv()`, `.to_json()`,
+  `.to_jsonl()`, `.to_dict()`; added `testdata_ai/result_types.py`
+- **Retry logic** — `generator.py` retries up to 3 attempts to fill shortfall when the AI
+  returns fewer records than requested; Faker is applied once on the full accumulated batch
+- `GenerateResult` and `RelationshipResult` exported from top-level `testdata_ai` package
+- New tests: `tests/generator/test_result_types.py`, `tests/generator/test_generate_dispatch.py`
+- Updated examples and README to reflect new return types
+- pytest: suppress `prompt_hints is empty` `UserWarning` in test runs
+
 ## [0.11.0] - 2026-03-10
 
 ### Added
