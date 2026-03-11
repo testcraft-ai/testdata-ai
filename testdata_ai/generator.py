@@ -584,17 +584,12 @@ def generate(
     """
     from testdata_ai.result_types import GenerateResult, RelationshipResult
 
-    gen = DataGenerator(
-        provider=provider,
-        model=model,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        api_key=api_key,
-        locale=locale,
-    )
-
     # str → context name
     if isinstance(input, str):
+        gen = DataGenerator(
+            provider=provider, model=model, temperature=temperature,
+            max_tokens=max_tokens, api_key=api_key, locale=locale,
+        )
         records: List[Dict[str, Any]] = []
         for batch in gen.generate_batched(input, count, batch_size, validate=validate):
             records.extend(batch)
@@ -602,6 +597,10 @@ def generate(
 
     # type (Pydantic model) or dict without "nodes" → generate_from_model
     if isinstance(input, type) or (isinstance(input, dict) and "nodes" not in input):
+        gen = DataGenerator(
+            provider=provider, model=model, temperature=temperature,
+            max_tokens=max_tokens, api_key=api_key, locale=locale,
+        )
         records = gen.generate_from_model(
             input, count, validate,
             field_providers=field_providers,
@@ -611,6 +610,10 @@ def generate(
 
     # dict with "nodes" → relationship graph
     if isinstance(input, dict) and "nodes" in input:
+        gen = DataGenerator(
+            provider=provider, model=model, temperature=temperature,
+            max_tokens=max_tokens, api_key=api_key, locale=locale,
+        )
         result = gen.generate_with_relationships(
             input["nodes"], validate=validate, progress_callback=progress_callback
         )
