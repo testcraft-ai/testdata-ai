@@ -83,6 +83,7 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 filterwarnings = [
     "ignore::pytest.PytestCollectionWarning",
+    "ignore:.*prompt_hints.*is empty.*:UserWarning",
 ]
 log_cli = true
 log_cli_level = "INFO"

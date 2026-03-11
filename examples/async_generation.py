@@ -1,7 +1,7 @@
 """
-Async parallel generation examples.
+Async parallel test data generation for testdata-ai.
 
-generate_parallel() and async_generate() run multiple AI calls concurrently,
+async_generate() and generate() run multiple AI calls concurrently,
 dramatically reducing wall-clock time when generating large datasets.
 
 Uniqueness across parallel calls is guaranteed via two layers:
@@ -25,7 +25,7 @@ Run:
 import asyncio
 import time
 
-from testdata_ai import GenerateSpec, async_generate, generate_parallel
+from testdata_ai import GenerateSpec, async_generate
 
 
 def section(title: str) -> None:
@@ -44,7 +44,7 @@ async def example_multi_context():
     section("1. Multi-context parallel")
 
     t = time.perf_counter()
-    results = await generate_parallel([
+    results = await async_generate([
         GenerateSpec("ecommerce_customer", count=3, label="customers"),
         GenerateSpec("banking_user",        count=3, label="accounts"),
         GenerateSpec("iot_device",          count=3, label="devices"),
@@ -64,7 +64,7 @@ async def example_single_context_parallel():
 
     # No label → all three batches merged into results["ecommerce_customer"]
     t = time.perf_counter()
-    results = await generate_parallel([
+    results = await async_generate([
         GenerateSpec("ecommerce_customer", count=5),
         GenerateSpec("ecommerce_customer", count=5),
         GenerateSpec("ecommerce_customer", count=5),
@@ -82,7 +82,7 @@ async def example_async_generate_batched():
 
     # 15 records split into 5 batches of 3, max 2 running at once
     t = time.perf_counter()
-    records = await async_generate(
+    result = await async_generate(
         "ecommerce_customer",
         count=15,
         parallelism=2,
@@ -90,9 +90,9 @@ async def example_async_generate_batched():
     )
 
     print(f"\n  Generated in {elapsed(t)}")
-    print(f"  Count   : {len(records)} records")
+    print(f"  Count   : {len(result)} records")
     print(f"  Batching: ceil(15/3) = 5 batches × 3, max 2 concurrent")
-    print(f"  First record keys: {list(records[0].keys())}")
+    print(f"  First record keys: {list(result[0].keys())}")
 
 
 # ── 4. Cross-call uniqueness with global_unique_fields ───────────────────────
@@ -100,7 +100,7 @@ async def example_async_generate_batched():
 async def example_unique_fields():
     section("4. Cross-call uniqueness — global_unique_fields=['email']")
 
-    results = await generate_parallel(
+    results = await async_generate(
         [
             GenerateSpec("ecommerce_customer", count=5, label="segment_a"),
             GenerateSpec("ecommerce_customer", count=5, label="segment_b"),
@@ -131,7 +131,7 @@ async def example_unique_fields():
 async def example_explicit_labels():
     section("5. Explicit labels — buyers vs sellers (same context)")
 
-    results = await generate_parallel([
+    results = await async_generate([
         GenerateSpec("ecommerce_customer", count=2, label="buyers"),
         GenerateSpec("ecommerce_customer", count=2, label="sellers"),
     ])
@@ -150,7 +150,7 @@ async def example_explicit_labels():
 async def example_locale_parallel():
     section("6. Locale-aware parallel — mixed locales per spec")
 
-    results = await generate_parallel([
+    results = await async_generate([
         GenerateSpec("ecommerce_customer", count=2, locale="pl_PL", label="pl_customers"),
         GenerateSpec("ecommerce_customer", count=2, locale="ja_JP", label="jp_customers"),
         GenerateSpec("hr_employee",        count=2, locale="de_DE", label="de_employees"),
@@ -176,14 +176,21 @@ async def main():
 
     section("Summary — API cheatsheet")
     print("""
-  # Multi-context, all parallel:
-  results = await generate_parallel([
+  # Multi-context, all parallel (async):
+  results = await async_generate([
       GenerateSpec("ecommerce_customer", 100, label="buyers"),
       GenerateSpec("banking_user",        50, label="accounts"),
   ], global_unique_fields=["email"])
 
+  # Multi-context, all parallel (sync — from non-async code):
+  from testdata_ai import generate
+  results = generate([
+      GenerateSpec("ecommerce_customer", 100, label="buyers"),
+      GenerateSpec("banking_user",        50, label="accounts"),
+  ])
+
   # Single-context, auto-merge (no label):
-  results = await generate_parallel([
+  results = await async_generate([
       GenerateSpec("ecommerce_customer", 1000),
       GenerateSpec("ecommerce_customer", 1000),
       GenerateSpec("ecommerce_customer", 1000),
@@ -191,7 +198,7 @@ async def main():
   records = results["ecommerce_customer"]  # 3000 merged records
 
   # Single-context convenience wrapper:
-  records = await async_generate(
+  result = await async_generate(
       "ecommerce_customer",
       count=9000,
       parallelism=3,      # max concurrent AI calls

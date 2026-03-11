@@ -37,7 +37,7 @@ _context_file_option = click.option(
 
 
 def _common_options(f):
-    """Options shared by `generate` and `generate-related`."""
+    """Options shared by generate commands."""
     for opt in reversed([
         click.option(
             "-o", "--output", "fmt",
@@ -115,6 +115,12 @@ def _load_context_files(context_files, quiet: bool = False) -> None:
     help="JSON or YAML file with a JSON Schema definition (alternative to --context).",
 )
 @click.option(
+    "--graph-file",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="YAML or JSON file describing an entity relationship graph (alternative to --context).",
+)
+@click.option(
     "--count", default=10, show_default=True, help="Number of records to generate."
 )
 @_common_options
@@ -125,14 +131,17 @@ def _load_context_files(context_files, quiet: bool = False) -> None:
 )
 @_context_file_option
 def generate(
-    context, schema_file, count, fmt, provider, model, max_tokens, temperature, no_validate,
-    batch_size, quiet, locale, context_files, table,
+    context, schema_file, graph_file, count, fmt, provider, model, max_tokens, temperature,
+    no_validate, batch_size, quiet, locale, context_files, table,
 ):
     """Generate realistic test data using AI."""
-    if not context and not schema_file:
-        raise click.ClickException("Provide --context or --schema-file.")
-    if context and schema_file:
-        raise click.ClickException("--context and --schema-file are mutually exclusive.")
+    inputs_given = sum(bool(x) for x in [context, schema_file, graph_file])
+    if inputs_given == 0:
+        raise click.ClickException("Provide --context, --schema-file, or --graph-file.")
+    if inputs_given > 1:
+        raise click.ClickException(
+            "--context, --schema-file, and --graph-file are mutually exclusive."
+        )
 
     _load_context_files(context_files, quiet)
 
@@ -141,6 +150,11 @@ def generate(
     table = "".join(c if c.isalnum() or c == "_" else "_" for c in table) or "records"
     if table[0].isdigit():
         table = f"_{table}"
+
+    if graph_file:
+        _run_graph_file(graph_file, fmt, provider, model, max_tokens, temperature,
+                        no_validate, batch_size, quiet, locale)
+        return
 
     if context:
         try:
@@ -158,6 +172,90 @@ def generate(
 
     records = _run_streaming(gen, context, count, batch_size, fmt, no_validate, quiet, table)
     _report(records, count, gen.provider.max_tokens, quiet)
+
+
+def _run_graph_file(graph_file, fmt, provider, model, max_tokens, temperature,
+                    no_validate, batch_size, quiet, locale):
+    """Generate related entities from a YAML/JSON graph file."""
+    try:
+        with open(graph_file) as f:
+            content = f.read()
+        if graph_file.endswith(".json"):
+            graph = json.loads(content)
+        else:
+            graph = yaml.safe_load(content)
+    except (OSError, ValueError, yaml.YAMLError) as e:
+        raise click.ClickException(f"Failed to load graph file: {e}")
+
+    if not isinstance(graph, dict):
+        raise click.ClickException("Graph file must contain a YAML/JSON object (mapping).")
+
+    # Apply CLI batch_size as default for nodes that don't specify their own
+    for node in graph.values():
+        if isinstance(node, dict):
+            node.setdefault("batch_size", batch_size)
+
+    gen = _make_generator(provider, model, max_tokens, temperature, locale)
+
+    # Auto-adjust max_tokens for each node
+    for node in graph.values():
+        if not isinstance(node, dict):
+            continue
+        context_name = node.get("context")
+        if not context_name:
+            continue
+        try:
+            node_schema = get_context_schema(context_name)
+        except ValueError:
+            continue
+        node_batch = node.get("batch_size", batch_size)
+        _adjust_max_tokens(gen, node_schema, node_batch, quiet, user_set=max_tokens is not None)
+
+    entity_names = list(graph.keys())
+    if not quiet:
+        click.echo(
+            click.style(
+                f"Generating related entities: {', '.join(entity_names)} "
+                f"[{gen.config.provider}/{gen.config.model}]",
+                fg="cyan",
+            ),
+            err=True,
+        )
+
+    with _Spinner("Starting…", silent=quiet) as spinner:
+        try:
+            result = gen.generate_with_relationships(
+                graph,
+                validate=not no_validate,
+                progress_callback=spinner.update if not quiet else None,
+            )
+        except ValueError as e:
+            raise click.ClickException(str(e))
+        except Exception as e:
+            raise click.ClickException(f"Generation failed: {e}")
+
+    if fmt == "json":
+        click.echo(json.dumps(result, indent=2))
+    elif fmt == "jsonl":
+        for entity_name, records in result.items():
+            click.echo(json.dumps({"entity": entity_name, "records": records}))
+    elif fmt == "yaml":
+        click.echo(yaml.dump(result, allow_unicode=True, sort_keys=False), nl=False)
+    elif fmt == "csv":
+        for entity_name, records in result.items():
+            click.echo(f"# entity: {entity_name}")
+            click.echo(_records_to_csv(records), nl=False)
+    elif fmt == "sql":
+        for entity_name, records in result.items():
+            click.echo(_records_to_sql(records, entity_name), nl=False)
+
+    if not quiet:
+        total = sum(len(recs) for recs in result.values())
+        per_entity = ", ".join(f"{k}: {len(v)}" for k, v in result.items())
+        click.echo(
+            click.style(f"Generated {total} total records ({per_entity})", fg="green"),
+            err=True,
+        )
 
 
 def _run_schema_file(gen, schema_file, count, fmt, no_validate, quiet, max_tokens_user_set, table="records"):
@@ -367,118 +465,6 @@ def list_models_cmd(provider):
     click.echo("-" * 40)
     for name in models:
         click.echo(name)
-
-
-@cli.command("generate-related")
-@click.option(
-    "--graph-file",
-    required=True,
-    type=click.Path(exists=True, dir_okay=False),
-    help="YAML or JSON file describing the entity relationship graph.",
-)
-@_common_options
-def generate_related_cmd(graph_file, fmt, provider, model, max_tokens, temperature,
-                         no_validate, batch_size, quiet, locale):
-    """Generate multiple related entity datasets with referential integrity.
-
-    The graph file (YAML or JSON) defines entities and their relationships.
-    Parents are generated first; child prompts embed sample parent records for
-    semantic coherence. FK values are enforced after generation.
-
-    \b
-    Example graph file (relationships.yaml):
-      users:
-        context: ecommerce_customer
-        count: 5
-      orders:
-        context: restaurant_order
-        count: 20
-        parent: users
-        fk_field: user_id
-        parent_pk: email
-    """
-    # Load graph file
-    try:
-        with open(graph_file) as f:
-            content = f.read()
-        if graph_file.endswith(".json"):
-            graph = json.loads(content)
-        else:
-            graph = yaml.safe_load(content)
-    except (OSError, ValueError, yaml.YAMLError) as e:
-        raise click.ClickException(f"Failed to load graph file: {e}")
-
-    if not isinstance(graph, dict):
-        raise click.ClickException("Graph file must contain a YAML/JSON object (mapping).")
-
-    # Apply CLI batch_size as default for nodes that don't specify their own
-    for node in graph.values():
-        if isinstance(node, dict):
-            node.setdefault("batch_size", batch_size)
-
-    # Build generator
-    gen = _make_generator(provider, model, max_tokens, temperature, locale)
-
-    # Auto-adjust max_tokens for each node (skipped when user passed --max-tokens)
-    for node in graph.values():
-        if not isinstance(node, dict):
-            continue
-        context_name = node.get("context")
-        if not context_name:
-            continue
-        try:
-            node_schema = get_context_schema(context_name)
-        except ValueError:
-            continue  # unknown context will raise a clearer error later
-        node_batch = node.get("batch_size", batch_size)
-        _adjust_max_tokens(gen, node_schema, node_batch, quiet, user_set=max_tokens is not None)
-
-    entity_names = list(graph.keys())
-    if not quiet:
-        click.echo(
-            click.style(
-                f"Generating related entities: {', '.join(entity_names)} "
-                f"[{gen.config.provider}/{gen.config.model}]",
-                fg="cyan",
-            ),
-            err=True,
-        )
-
-    with _Spinner("Starting…", silent=quiet) as spinner:
-        try:
-            result = gen.generate_with_relationships(
-                graph,
-                validate=not no_validate,
-                progress_callback=spinner.update if not quiet else None,
-            )
-        except ValueError as e:
-            raise click.ClickException(str(e))
-        except Exception as e:
-            raise click.ClickException(f"Generation failed: {e}")
-
-    # Output
-    if fmt == "json":
-        click.echo(json.dumps(result, indent=2))
-    elif fmt == "jsonl":
-        for entity_name, records in result.items():
-            click.echo(json.dumps({"entity": entity_name, "records": records}))
-    elif fmt == "yaml":
-        click.echo(yaml.dump(result, allow_unicode=True, sort_keys=False), nl=False)
-    elif fmt == "csv":
-        for entity_name, records in result.items():
-            click.echo(f"# entity: {entity_name}")
-            click.echo(_records_to_csv(records), nl=False)
-    elif fmt == "sql":
-        for entity_name, records in result.items():
-            click.echo(_records_to_sql(records, entity_name), nl=False)
-
-    if not quiet:
-        total = sum(len(recs) for recs in result.values())
-        per_entity = ", ".join(f"{k}: {len(v)}" for k, v in result.items())
-        click.echo(
-            click.style(f"Generated {total} total records ({per_entity})", fg="green"),
-            err=True,
-        )
 
 
 class _Spinner:

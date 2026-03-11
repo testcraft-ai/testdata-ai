@@ -18,7 +18,7 @@ from pathlib import Path
 from testdata_ai import (
     DataGenerator,
     ContextSchema,
-    generate_from_model,
+    generate,
     load_contexts_from_file,
     register_context,
 )
@@ -138,10 +138,10 @@ def example_yaml():
         print(f"    {r['name']:30s}  {r['email']}")
 
 
-# ── 4. generate_from_model with unique_fields ──────────────────────────────────
+# ── 4. generate() with JSON Schema + unique_fields ────────────────────────────
 
 def example_from_model():
-    section("4. generate_from_model + unique_fields kwarg")
+    section("4. generate(json_schema) + unique_fields kwarg")
 
     json_schema = {
         "title": "APIUser",
@@ -155,7 +155,7 @@ def example_from_model():
         },
     }
 
-    records = generate_from_model(
+    records = generate(
         json_schema,
         count=10,
         field_providers={

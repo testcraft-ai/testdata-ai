@@ -5,7 +5,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 from testdata_ai.contexts import CONTEXTS, register_context, ContextSchema
-from testdata_ai.generator import generate_from_model
+from testdata_ai.generator import generate
 
 
 class _FakeModel:
@@ -136,13 +136,13 @@ class TestUniqueFieldsIntegration:
             unique_fields=["name"],
         )
 
-    def test_module_level_generate_from_model_passes_unique_fields(self):
+    def test_dispatch_generate_from_model_passes_unique_fields(self):
         with patch("testdata_ai.generator.DataGenerator") as mock_cls:
             mock_instance = MagicMock()
             mock_instance.generate_from_model.return_value = []
             mock_cls.return_value = mock_instance
 
-            generate_from_model(
+            generate(
                 _FakeModel,
                 count=1,
                 field_providers={"name": "faker:name"},

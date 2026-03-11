@@ -34,15 +34,15 @@ testdata-ai generate --context ecommerce_customer --count 10
 ```
 
 ```python
-from testdata_ai import (
-    generate, generate_from_model, generate_with_relationships,
-    generate_parallel, async_generate, GenerateSpec,
-    generate_as_dataframe, to_dataframe,
-)
+from testdata_ai import generate, async_generate, GenerateSpec
 from pydantic import BaseModel
 
-# Built-in context
-users = generate("ecommerce_customer", count=50)
+# Built-in context → GenerateResult (list-like with export helpers)
+result = generate("ecommerce_customer", count=50)
+result[0]                             # first record dict
+result.to_csv()                       # CSV string
+result.to_dataframe()                 # pandas DataFrame (requires testdata-ai[pandas])
+result.to_json("customers.json")      # save to file
 
 # Your own Pydantic model — no ContextSchema needed
 class Order(BaseModel):
@@ -50,38 +50,34 @@ class Order(BaseModel):
     total: float
     status: str
 
-orders = generate_from_model(Order, count=10)
+orders = generate(Order, count=10)    # also returns GenerateResult
 
-# Multi-entity datasets with referential integrity
-result = generate_with_relationships({
-    "customers": {"context": "ecommerce_customer", "count": 5},
-    "orders": {
-        "context": "restaurant_order", "count": 20,
-        "parent": "customers", "fk_field": "customer_email", "parent_pk": "email",
-    },
+# Multi-entity datasets with referential integrity → RelationshipResult
+result = generate({
+    "nodes": {
+        "customers": {"context": "ecommerce_customer", "count": 5},
+        "orders": {
+            "context": "restaurant_order", "count": 20,
+            "parent": "customers", "fk_field": "customer_email", "parent_pk": "email",
+        },
+    }
 })
 # result["orders"][*]["customer_email"] is always a real customer email
+result.to_json("graph.json")
+result.to_dataframes()                # Dict[str, DataFrame] (requires pandas)
 
-# Async parallel: generate multiple contexts simultaneously
+# Async parallel: generate multiple contexts simultaneously → RelationshipResult
 import asyncio
 
-results = asyncio.run(generate_parallel([
+results = asyncio.run(async_generate([
     GenerateSpec("ecommerce_customer", count=500, label="customers"),
     GenerateSpec("banking_user",        count=500, label="accounts"),
     GenerateSpec("iot_device",          count=500, label="devices"),
 ]))
 # all 3 AI calls run concurrently — much faster than sequential generate()
 
-# Or generate one context in parallel batches
-records = asyncio.run(async_generate("ecommerce_customer", count=3000, parallelism=5))
-
-# pandas DataFrame — one-liner
-df = generate_as_dataframe("ecommerce_customer", count=50)
-print(df[["name", "email", "loyalty_tier"]].head())
-
-# …or convert any records list
-records = generate("ecommerce_customer", count=20)
-df = to_dataframe(records)
+# Or generate one context in parallel batches → GenerateResult
+result = asyncio.run(async_generate("ecommerce_customer", count=3000, parallelism=5))
 ```
 
 **Why testdata-ai?**
@@ -92,9 +88,9 @@ df = to_dataframe(records)
 - **Pydantic / JSON Schema support** — generate data directly from your existing models
 - **Faker hybrid mode** — mark fields as `faker:email` / `faker:iban` to get format-guaranteed values while AI handles the semantic context
 - **Unique field constraints** — add `unique_fields=["email", "user_id"]` to any context and those fields will never duplicate within a batch
-- **Multi-entity datasets** — `generate_with_relationships()` generates customers → orders → shipments with guaranteed FK integrity _and_ semantic coherence (child records make sense given parent records)
-- **Async / parallel generation** — `generate_parallel()` and `async_generate()` run multiple AI calls concurrently via `asyncio`, dramatically reducing wall-clock time for large datasets; cross-call uniqueness guaranteed via Faker dedup
-- **pandas output** — `generate_as_dataframe()` returns a `DataFrame` directly; `to_dataframe()` converts any records list; nested dicts auto-expanded via `pd.json_normalize()`
+- **Multi-entity datasets** — pass `{"nodes": {...}}` to `generate()` to get customers → orders → shipments with guaranteed FK integrity _and_ semantic coherence (child records make sense given parent records)
+- **Async / parallel generation** — pass a `list[GenerateSpec]` to `generate()` or `async_generate()` to run multiple AI calls concurrently via `asyncio`, dramatically reducing wall-clock time for large datasets; cross-call uniqueness guaranteed via Faker dedup
+- **pandas output** — call `.to_dataframe()` on any `GenerateResult`, or `.to_dataframes()` on a `RelationshipResult`; nested dicts auto-expanded via `pd.json_normalize()`
 
 | | Faker | testdata-ai |
 |---|---|---|
@@ -102,12 +98,12 @@ df = to_dataframe(records)
 | Cultural diversity | Limited | Names from many cultures |
 | Behavioral coherence | None | Age, location, and habits match |
 | Edge-case variety | Manual | AI generates it automatically |
-| Use your own Pydantic model | Not possible | `generate_from_model(MyModel, count=10)` |
+| Use your own Pydantic model | Not possible | `generate(MyModel, count=10)` |
 | Format-safe critical fields | ✅ Faker's domain | `field_providers={"email": "faker:email"}` |
 | Unique values across records | Requires manual set tracking | `unique_fields=["email", "user_id"]` |
-| Multi-entity FK datasets | Sequential, no semantic link | `generate_with_relationships(graph)` — child records contextually match parents |
-| Large dataset throughput | Single-threaded | `generate_parallel()` / `async_generate()` — concurrent AI calls, N× speedup |
-| DataFrame output | `pd.DataFrame(records)` | `generate_as_dataframe()` / `to_dataframe()` — nested dicts auto-flattened |
+| Multi-entity FK datasets | Sequential, no semantic link | `generate({"nodes": graph})` — child records contextually match parents |
+| Large dataset throughput | Single-threaded | `generate([specs])` / `async_generate([specs])` — concurrent AI calls, N× speedup |
+| DataFrame output | `pd.DataFrame(records)` | `result.to_dataframe()` / `result.to_dataframes()` — nested dicts auto-flattened |
 
 **Why not just use Faker?**
 
@@ -139,8 +135,9 @@ country="Japan"
 - [CLI](#cli)
   - [generate-related](#generate-related)
 - [Python API](#python-api)
+  - [generate()](#generate--unified-dispatch-function)
   - [generate\_with\_relationships()](#generate_with_relationships--multi-entity-datasets)
-  - [generate\_from\_model()](#generate_from_model--schema-from-pydantic--json-schema)
+  - [Schema from Pydantic / JSON Schema](#schema-from-pydantic--json-schema--generatemodel-)
   - [Async / Parallel Generation](#async--parallel-generation)
   - [pandas DataFrame output](#pandas-dataframe-output)
 - [Custom Contexts](#custom-contexts)
@@ -523,7 +520,7 @@ many = gen.generate("banking_user", count=100, batch_size=20)
 records = gen.generate("banking_user", count=20, validate=False)
 ```
 
-`DataGenerator.generate()` returns `List[Dict[str, Any]]` — a list of plain Python dicts. For `count > batch_size`, it automatically splits the work into multiple AI calls and combines the results.
+`DataGenerator.generate()` returns `List[Dict[str, Any]]` — a plain list of dicts. For `count > batch_size`, it automatically splits the work into multiple AI calls and combines the results. The module-level `generate()` function wraps this in a `GenerateResult` for convenience.
 
 **Raises:**
 - `ValueError` — unknown context, invalid JSON from AI, or bad arguments
@@ -531,23 +528,97 @@ records = gen.generate("banking_user", count=20, validate=False)
 
 ---
 
-### `generate()` convenience function
+### `generate()` — unified dispatch function
 
-For one-off use without instantiating the class:
+A single entry point that automatically dispatches based on what you pass as `input`. Returns a typed result object with built-in export helpers.
 
 ```python
 from testdata_ai import generate
 
-customers = generate("ecommerce_customer", count=20)
+# str → context name → GenerateResult
+result = generate("ecommerce_customer", count=20)
+result[0]                # first record dict (list-like)
+result.to_json()         # JSON string
+result.to_csv()          # CSV string
+result.to_yaml()         # YAML string (requires pyyaml)
+result.to_dataframe()    # pandas DataFrame (requires testdata-ai[pandas])
+result.to_batches(10)    # iterate in chunks (no extra AI calls)
+result.to_records()      # plain List[Dict]
 
 # Generate in a specific locale
-polish_customers = generate("ecommerce_customer", count=20, locale="pl")
+polish = generate("ecommerce_customer", count=20, locale="pl")
 
-# Large counts split automatically into 20-record batches
+# Large counts split automatically into batches
 many = generate("ecommerce_customer", count=100, batch_size=20)
+
+# type or dict (no "nodes" key) → Pydantic model / JSON schema → GenerateResult
+from pydantic import BaseModel
+
+class Order(BaseModel):
+    customer_name: str
+    total: float
+
+orders = generate(Order, count=10)
+
+# dict with "nodes" key → relationship graph → RelationshipResult
+result = generate({
+    "nodes": {
+        "customers": {"context": "ecommerce_customer", "count": 3},
+        "orders": {
+            "context": "restaurant_order", "count": 9,
+            "parent": "customers", "fk_field": "customer_email", "parent_pk": "email",
+        },
+    }
+})
+result["customers"]       # List[Dict]
+result.to_json()          # JSON string
+result.to_dataframes()    # Dict[str, DataFrame]
+
+# list[GenerateSpec] → parallel generation → RelationshipResult
+from testdata_ai import GenerateSpec
+result = generate([
+    GenerateSpec("ecommerce_customer", count=100, label="buyers"),
+    GenerateSpec("banking_user",        count=50,  label="accounts"),
+])
+result["buyers"]          # List[Dict]
 ```
 
 Configuration (provider, model, etc.) is read from environment variables. For explicit control use `DataGenerator` directly.
+
+**`generate()` dispatch summary:**
+
+| `input` type | Dispatches to | Returns |
+|---|---|---|
+| `str` | context name | `GenerateResult` |
+| `type` / `dict` (no `"nodes"`) | Pydantic model or JSON schema | `GenerateResult` |
+| `dict` with `"nodes"` key | relationship graph | `RelationshipResult` |
+| `list[GenerateSpec]` | parallel generation | `RelationshipResult` |
+
+**`GenerateResult` methods:**
+
+| Method | Description |
+|---|---|
+| `result[i]`, `len(result)`, `for r in result` | list-like interface |
+| `.to_records()` | `List[Dict[str, Any]]` |
+| `.to_json(path=None)` | JSON string or writes to file |
+| `.to_csv(path=None)` | CSV string or writes to file |
+| `.to_yaml(path=None)` | YAML string or writes to file (requires pyyaml) |
+| `.to_dataframe(flatten=True)` | `pandas.DataFrame` (requires testdata-ai[pandas]) |
+| `.to_batches(batch_size=50)` | iterate in chunks (no extra AI calls) |
+
+**`RelationshipResult` methods:**
+
+| Method | Description |
+|---|---|
+| `result["entity"]` | `List[Dict]` for that entity |
+| `.to_json(path=None)` | JSON string or writes to file |
+| `.to_yaml(path=None)` | YAML string or writes to file (requires pyyaml) |
+| `.to_dataframes(flatten=True)` | `Dict[str, pandas.DataFrame]` (requires pandas) |
+
+**Raises:**
+- `ValueError` — unknown context, invalid JSON from AI, or bad arguments
+- `TypeError` — unsupported `input` type
+- `testdata_ai.contexts.ValidationError` — one or more records missing required fields (when `validate=True`)
 
 ---
 
@@ -556,21 +627,23 @@ Configuration (provider, model, etc.) is read from environment variables. For ex
 When you want to process or display records as they arrive rather than waiting for the full result:
 
 ```python
-from testdata_ai.generator import generate_batched
+from testdata_ai import DataGenerator
+
+gen = DataGenerator()
 
 # Process records in batches of 10 as each batch completes
-for batch in generate_batched("ecommerce_customer", count=50, batch_size=10):
+for batch in gen.generate_batched("ecommerce_customer", count=50, batch_size=10):
     print(f"Got {len(batch)} records")
     save_to_db(batch)       # commit each batch immediately
     send_to_pipeline(batch) # or stream to a downstream system
 
-# Or use DataGenerator directly for repeated use
+# Change provider as needed
 gen = DataGenerator(provider="anthropic")
 for batch in gen.generate_batched("banking_user", count=100, batch_size=20):
     process(batch)
 ```
 
-`generate_batched()` / `DataGenerator.generate_batched()` yield `List[Dict[str, Any]]` — one batch per iteration.
+`DataGenerator.generate_batched()` yields `List[Dict[str, Any]]` — one batch per iteration.
 
 ---
 
@@ -635,20 +708,25 @@ result = gen.generate_with_relationships({...})
 
 **Module-level convenience function:**
 
-```python
-from testdata_ai import generate_with_relationships
+Use the unified `generate()` with a `{"nodes": {...}}` dict:
 
-result = generate_with_relationships(
+```python
+from testdata_ai import generate
+
+result = generate(
     {
-        "customers": {"context": "ecommerce_customer", "count": 2},
-        "orders": {
-            "context": "restaurant_order", "count": 6,
-            "parent": "customers", "fk_field": "customer_email", "parent_pk": "email",
-        },
+        "nodes": {
+            "customers": {"context": "ecommerce_customer", "count": 2},
+            "orders": {
+                "context": "restaurant_order", "count": 6,
+                "parent": "customers", "fk_field": "customer_email", "parent_pk": "email",
+            },
+        }
     },
     validate=True,
     locale="ja",
 )
+# result is a RelationshipResult — dict subclass with .to_json(), .to_yaml(), .to_dataframes()
 ```
 
 **Graph node fields:**
@@ -677,13 +755,13 @@ See `examples/ecommerce_graph.yaml` and `examples/relationships.py` for full exa
 
 ---
 
-### `generate_from_model()` — Schema from Pydantic / JSON Schema
+### Schema from Pydantic / JSON Schema — `generate(Model, ...)`
 
-If you already have Pydantic models, pass them directly — no need to write a `ContextSchema` by hand. The field names, types, descriptions, and constraints are extracted automatically and used to guide the AI.
+If you already have Pydantic models, pass them directly to `generate()` — no need to write a `ContextSchema` by hand. The field names, types, descriptions, and constraints are extracted automatically and used to guide the AI.
 
 ```python
 from pydantic import BaseModel, Field
-from testdata_ai import generate_from_model
+from testdata_ai import generate
 
 class Customer(BaseModel):
     name: str
@@ -691,8 +769,11 @@ class Customer(BaseModel):
     age: int = Field(ge=18, le=99, description="Age in years")
     is_active: bool
 
-data = generate_from_model(Customer, count=10)
-# [{"name": "Aisha Patel", "email": "aisha@...", "age": 34, "is_active": True}, ...]
+result = generate(Customer, count=10)
+# result is a GenerateResult — iterable, indexable, with export helpers
+result[0]          # {"name": "Aisha Patel", "email": "aisha@...", "age": 34, ...}
+result.to_csv()    # CSV string
+result.to_json()   # JSON string
 ```
 
 **Nested models** work too:
@@ -709,7 +790,7 @@ class Order(BaseModel):
     total: float
     shipping_address: Address
 
-data = generate_from_model(Order, count=5)
+result = generate(Order, count=5)
 ```
 
 **Raw JSON Schema dict** — no Pydantic needed:
@@ -725,19 +806,19 @@ schema = {
         "in_stock": {"type": "boolean"},
     },
 }
-data = generate_from_model(schema, count=5)
+result = generate(schema, count=5)
 ```
 
 **All the usual options apply:**
 
 ```python
 # Locale
-data = generate_from_model(Customer, count=5, locale="pl")
+result = generate(Customer, count=5, locale="pl")
 
 # Skip validation (useful for models with many optional fields)
-data = generate_from_model(Customer, count=10, validate=False)
+result = generate(Customer, count=10, validate=False)
 
-# Via DataGenerator (reuse across multiple models)
+# Via DataGenerator (reuse across multiple models — returns plain List[Dict])
 gen = DataGenerator(provider="anthropic")
 customers = gen.generate_from_model(Customer, count=5)
 orders    = gen.generate_from_model(Order, count=3)
@@ -765,23 +846,30 @@ Run multiple AI calls concurrently using `asyncio`. Blocking provider calls are 
 
 ```python
 import asyncio
-from testdata_ai import generate_parallel, async_generate, GenerateSpec
+from testdata_ai import generate, async_generate, GenerateSpec
 ```
 
-#### `generate_parallel()` — multiple contexts at once
+#### Multiple contexts at once — `async_generate([specs])` or `generate([specs])`
+
+Pass a `list[GenerateSpec]` to either function. Use `async_generate` from async code, or `generate` from sync code:
 
 ```python
-results = await generate_parallel([
+# async context:
+results = await async_generate([
     GenerateSpec("ecommerce_customer", count=500, label="customers"),
     GenerateSpec("banking_user",        count=500, label="accounts"),
     GenerateSpec("iot_device",          count=500, label="devices"),
 ])
-# All 3 AI calls run concurrently
+# All 3 AI calls run concurrently — returns RelationshipResult
 # results["customers"] → List[Dict] (500 records)
 # results["accounts"]  → List[Dict] (500 records)
 # results["devices"]   → List[Dict] (500 records)
 
-asyncio.run(main())  # or await inside an existing async context
+# sync context (wraps asyncio.run internally):
+results = generate([
+    GenerateSpec("ecommerce_customer", count=500, label="customers"),
+    GenerateSpec("banking_user",        count=500, label="accounts"),
+])
 ```
 
 **Result keying:**
@@ -789,7 +877,7 @@ asyncio.run(main())  # or await inside an existing async context
 - When `label` is `None` and multiple specs share the same context, their results are **merged** under the context name:
 
 ```python
-results = await generate_parallel([
+results = await async_generate([
     GenerateSpec("ecommerce_customer", 1000),
     GenerateSpec("ecommerce_customer", 1000),
     GenerateSpec("ecommerce_customer", 1000),
@@ -800,7 +888,7 @@ records = results["ecommerce_customer"]  # ~3000 merged records
 **Cross-call uniqueness** — requires `pip install testdata-ai[faker]`:
 
 ```python
-results = await generate_parallel(
+results = await async_generate(
     [
         GenerateSpec("ecommerce_customer", count=500, label="segment_a"),
         GenerateSpec("ecommerce_customer", count=500, label="segment_b"),
@@ -825,14 +913,15 @@ Two uniqueness layers:
 
 #### `async_generate()` — single context, parallel batches
 
-Convenience wrapper for generating many records from one context by splitting into parallel batches:
+`async_generate` also accepts a context name string to split one large generation into parallel batches:
 
 ```python
 # 3000 records, 3 concurrent batches (default: ceil(count/parallelism) per batch)
-records = await async_generate("ecommerce_customer", count=3000, parallelism=3)
+result = await async_generate("ecommerce_customer", count=3000, parallelism=3)
+# returns GenerateResult — list-like with .to_csv(), .to_dataframe(), etc.
 
 # 9000 records: batches of 1000, max 3 concurrent (3 waves of 3)
-records = await async_generate(
+result = await async_generate(
     "ecommerce_customer",
     count=9000,
     parallelism=3,
@@ -841,14 +930,14 @@ records = await async_generate(
 )
 
 # Locale-aware
-records = await async_generate("ecommerce_customer", count=500, parallelism=5, locale="pl")
+result = await async_generate("ecommerce_customer", count=500, parallelism=5, locale="pl")
 ```
 
-**`async_generate()` parameters:**
+**`async_generate()` parameters (string input):**
 
 | Parameter | Default | Description |
 |---|---|---|
-| `context` | — | Context identifier |
+| `context` | — | Context identifier (str) |
 | `count` | — | Total records to generate |
 | `parallelism` | `3` | Max concurrent AI calls (semaphore limit) |
 | `batch_size` | `ceil(count/parallelism)` | Records per AI call |
@@ -860,11 +949,11 @@ records = await async_generate("ecommerce_customer", count=500, parallelism=5, l
 
 ```python
 import asyncio
-from testdata_ai import generate_parallel, async_generate, GenerateSpec
+from testdata_ai import async_generate, GenerateSpec
 
 async def main():
-    # Multi-context parallel
-    results = await generate_parallel([
+    # Multi-context parallel — RelationshipResult
+    results = await async_generate([
         GenerateSpec("ecommerce_customer", count=100, label="buyers"),
         GenerateSpec("banking_user",        count=50,  label="accounts"),
     ], global_unique_fields=["email"])
@@ -872,9 +961,9 @@ async def main():
     print(f"buyers:   {len(results['buyers'])} records")
     print(f"accounts: {len(results['accounts'])} records")
 
-    # Single-context high-throughput
-    records = await async_generate("hr_employee", count=1000, parallelism=5)
-    print(f"employees: {len(records)} records")
+    # Single-context high-throughput — GenerateResult
+    result = await async_generate("hr_employee", count=1000, parallelism=5)
+    print(f"employees: {len(result)} records")
 
 asyncio.run(main())
 ```
@@ -894,20 +983,35 @@ See `examples/async_generation.py` for more patterns including explicit labels, 
 pip install "testdata-ai[pandas]"
 ```
 
-Three ways to get a `DataFrame`:
+Call `.to_dataframe()` on any `GenerateResult`, or `.to_dataframes()` on a `RelationshipResult`:
 
 ```python
-from testdata_ai import generate, generate_as_dataframe, to_dataframe, DataGenerator, generate_with_relationships
-from testdata_ai.pandas_bridge import relationships_to_dataframes
+from testdata_ai import generate, DataGenerator
 
-# 1. One-liner convenience function
-df = generate_as_dataframe("ecommerce_customer", count=50)
+# 1. From a GenerateResult — call .to_dataframe()
+result = generate("ecommerce_customer", count=50)
+df = result.to_dataframe()
 print(df.shape)           # (50, N)
 print(df["email"].head())
 
-# 2. Convert any existing records list
-records = generate("ecommerce_customer", count=20)
-df = to_dataframe(records)
+# 2. From a RelationshipResult — call .to_dataframes()
+result = generate({
+    "nodes": {
+        "customers": {"context": "ecommerce_customer", "count": 3},
+        "orders": {
+            "context": "restaurant_order", "count": 9,
+            "parent": "customers", "fk_field": "customer_email", "parent_pk": "email",
+        },
+    }
+})
+dfs = result.to_dataframes()
+# dfs["customers"] → DataFrame(3 rows)
+# dfs["orders"]    → DataFrame(9 rows)
+
+merged = dfs["orders"].merge(
+    dfs["customers"][["email", "name"]],
+    left_on="customer_email", right_on="email", how="left",
+)
 
 # 3. Via DataGenerator (reuse across calls)
 gen = DataGenerator(provider="anthropic", locale="pl")
@@ -917,7 +1021,8 @@ df = gen.generate_as_dataframe("hr_employee", count=100)
 **Nested fields** are automatically expanded into dot-separated columns via `pd.json_normalize()`:
 
 ```python
-df = generate_as_dataframe("ecommerce_customer", count=5)
+result = generate("ecommerce_customer", count=5)
+df = result.to_dataframe()
 # location.city, location.country, shopping_behavior.frequency, etc. become separate columns
 print([c for c in df.columns if "." in c])
 # ['location.city', 'location.country', 'location.timezone',
@@ -927,46 +1032,14 @@ print([c for c in df.columns if "." in c])
 Pass `flatten=False` to keep nested dicts as object-typed cells instead:
 
 ```python
-df = generate_as_dataframe("ecommerce_customer", count=5, flatten=False)
+df = result.to_dataframe(flatten=False)
 # df["location"] is a column of dicts
 ```
 
-**Multi-entity datasets** — convert a `generate_with_relationships()` result to a dict of DataFrames:
-
-```python
-result = generate_with_relationships({
-    "customers": {"context": "ecommerce_customer", "count": 3},
-    "orders": {
-        "context": "restaurant_order", "count": 9,
-        "parent": "customers", "fk_field": "customer_email", "parent_pk": "email",
-    },
-})
-
-dfs = relationships_to_dataframes(result)
-# dfs["customers"] → DataFrame(3 rows)
-# dfs["orders"]    → DataFrame(9 rows)
-
-merged = dfs["orders"].merge(
-    dfs["customers"][["email", "name"]],
-    left_on="customer_email", right_on="email", how="left",
-)
-```
-
-**`generate_as_dataframe()` parameters:**
+**`.to_dataframe()` / `.to_dataframes()` parameters:**
 
 | Parameter | Default | Description |
 |---|---|---|
-| `context` | — | Context identifier |
-| `count` | `10` | Number of records |
-| `validate` | `True` | Run schema validation |
-| `locale` | `None` | BCP 47 locale tag |
-| `flatten` | `True` | Expand nested dicts with `pd.json_normalize()` |
-
-**`to_dataframe()` / `records_to_dataframe()` parameters:**
-
-| Parameter | Default | Description |
-|---|---|---|
-| `records` | — | `List[Dict]` from any `generate*()` call |
 | `flatten` | `True` | Expand nested dicts with `pd.json_normalize()` |
 
 **Raises:** `ImportError` (with install hint) if `pandas` is not installed.
@@ -1163,12 +1236,12 @@ records = gen.generate("banking_pl", count=10)
 # → Faker generates email + iban + phone (format guaranteed)
 ```
 
-Works with `generate_from_model` too:
+Works with `generate()` on a Pydantic model too:
 
 ```python
-from testdata_ai import generate_from_model
+from testdata_ai import generate
 
-data = generate_from_model(
+result = generate(
     Customer,
     count=10,
     field_providers={"email": "faker:email", "phone": "faker:phone_number"},
@@ -1239,10 +1312,12 @@ register_context("order", ContextSchema(
 ))
 ```
 
-Works with `generate_from_model` too:
+Works with `generate()` on a Pydantic model too:
 
 ```python
-records = generate_from_model(
+from testdata_ai import generate
+
+result = generate(
     UserSchema,
     count=50,
     field_providers={"user_id": "faker:uuid4", "email": "faker:email"},
@@ -1455,6 +1530,7 @@ Run `testdata-ai list-contexts` to see all contexts, or `testdata-ai show-contex
 - [x] Async / parallel generation — `generate_parallel()` / `async_generate()` / `GenerateSpec`; asyncio + thread pool; cross-call Faker dedup via `global_unique_fields`; semaphore concurrency cap
 - [x] More providers — Google Gemini (`gemini-2.0-flash`), Mistral (`mistral-small-latest`), Cohere (`command-r`)
 - [x] pandas output — `generate_as_dataframe()` / `to_dataframe()` / `relationships_to_dataframes()`; nested dicts auto-flattened via `json_normalize`; optional `testdata-ai[pandas]` extra
+- [x] Unified `generate()` dispatch + typed result objects — single function for all input types (str / Pydantic model / JSON schema / relationship graph / list of GenerateSpec); `GenerateResult` (list-like: `.to_json()`, `.to_csv()`, `.to_yaml()`, `.to_dataframe()`, `.to_batches()`) and `RelationshipResult` (dict subclass: `.to_json()`, `.to_yaml()`, `.to_dataframes()`); `async_generate` also accepts all input types
 
 **Next:**
 - [ ] `/docs` folder — installation, quickstart, CLI reference, API reference, custom contexts, pytest integration

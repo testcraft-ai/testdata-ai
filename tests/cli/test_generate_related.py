@@ -1,4 +1,4 @@
-"""Tests for the 'generate-related' CLI command."""
+"""Tests for 'generate --graph-file' CLI option."""
 
 import json
 
@@ -59,23 +59,23 @@ def _graph_json_file(tmp_path, graph=None):
 # ---------------------------------------------------------------------------
 
 
-class TestGenerateRelatedCmd:
+class TestGenerateGraphFileCmd:
 
-    def test_requires_graph_file(self, runner):
-        result = runner.invoke(cli, ["generate-related"])
+    def test_requires_graph_file_option(self, runner):
+        result = runner.invoke(cli, ["generate"])
         assert result.exit_code != 0
-        assert "graph-file" in result.output or "Missing option" in result.output
+        assert "Provide" in result.output or "Error" in result.output
 
     def test_nonexistent_graph_file_errors(self, runner, tmp_path):
         result = runner.invoke(
-            cli, ["generate-related", "--graph-file", str(tmp_path / "nope.yaml"), "-q"]
+            cli, ["generate", "--graph-file", str(tmp_path / "nope.yaml"), "-q"]
         )
         assert result.exit_code != 0
 
     def test_valid_yaml_produces_json_output(self, runner, tmp_path):
         graph_file = _graph_yaml_file(tmp_path)
         with _patch_related_generator(_SIMPLE_RESULT):
-            result = runner.invoke(cli, ["generate-related", "--graph-file", graph_file, "-q"])
+            result = runner.invoke(cli, ["generate", "--graph-file", graph_file, "-q"])
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
         assert set(data.keys()) == {"users", "orders"}
@@ -83,7 +83,7 @@ class TestGenerateRelatedCmd:
     def test_valid_json_produces_json_output(self, runner, tmp_path):
         graph_file = _graph_json_file(tmp_path)
         with _patch_related_generator(_SIMPLE_RESULT):
-            result = runner.invoke(cli, ["generate-related", "--graph-file", graph_file, "-q"])
+            result = runner.invoke(cli, ["generate", "--graph-file", graph_file, "-q"])
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
         assert "users" in data and "orders" in data
@@ -91,9 +91,8 @@ class TestGenerateRelatedCmd:
     def test_default_output_format_is_json(self, runner, tmp_path):
         graph_file = _graph_yaml_file(tmp_path)
         with _patch_related_generator(_SIMPLE_RESULT):
-            result = runner.invoke(cli, ["generate-related", "--graph-file", graph_file, "-q"])
+            result = runner.invoke(cli, ["generate", "--graph-file", graph_file, "-q"])
         assert result.exit_code == 0
-        # Must be parseable as a single JSON object
         data = json.loads(result.output)
         assert isinstance(data, dict)
 
@@ -102,7 +101,7 @@ class TestGenerateRelatedCmd:
         with _patch_related_generator(_SIMPLE_RESULT):
             result = runner.invoke(
                 cli,
-                ["generate-related", "--graph-file", graph_file, "-o", "jsonl", "-q"],
+                ["generate", "--graph-file", graph_file, "-o", "jsonl", "-q"],
             )
         assert result.exit_code == 0
         lines = [l for l in result.output.strip().splitlines() if l]
@@ -119,7 +118,7 @@ class TestGenerateRelatedCmd:
         with _patch_related_generator(_SIMPLE_RESULT):
             result = runner.invoke(
                 cli,
-                ["generate-related", "--graph-file", graph_file, "-o", "yaml", "-q"],
+                ["generate", "--graph-file", graph_file, "-o", "yaml", "-q"],
             )
         assert result.exit_code == 0
         data = yaml.safe_load(result.output)
@@ -130,7 +129,7 @@ class TestGenerateRelatedCmd:
         with _patch_related_generator(_SIMPLE_RESULT):
             result = runner.invoke(
                 cli,
-                ["generate-related", "--graph-file", graph_file, "-o", "csv", "-q"],
+                ["generate", "--graph-file", graph_file, "-o", "csv", "-q"],
             )
         assert result.exit_code == 0
         assert "# entity: users" in result.output
@@ -143,7 +142,7 @@ class TestGenerateRelatedCmd:
         with _patch_related_generator(_SIMPLE_RESULT):
             result = runner.invoke(
                 cli,
-                ["generate-related", "--graph-file", graph_file, "-o", "sql", "-q"],
+                ["generate", "--graph-file", graph_file, "-o", "sql", "-q"],
             )
         assert result.exit_code == 0
         assert "users" in result.output
@@ -151,40 +150,35 @@ class TestGenerateRelatedCmd:
         assert "INSERT INTO" in result.output
 
     def test_quiet_output_is_only_json(self, runner, tmp_path):
-        """With -q, output should be valid JSON with no extra status lines."""
         graph_file = _graph_yaml_file(tmp_path)
         with _patch_related_generator(_SIMPLE_RESULT):
             result = runner.invoke(
-                cli, ["generate-related", "--graph-file", graph_file, "-q"],
+                cli, ["generate", "--graph-file", graph_file, "-q"],
             )
         assert result.exit_code == 0
-        # Output must be parseable as JSON (no status text mixed in)
         data = json.loads(result.output)
         assert isinstance(data, dict)
 
     def test_non_quiet_shows_status_messages(self, runner, tmp_path):
-        """Without -q, status messages (entity names or counts) appear in output."""
         graph_file = _graph_yaml_file(tmp_path)
         with _patch_related_generator(_SIMPLE_RESULT):
             result = runner.invoke(
-                cli, ["generate-related", "--graph-file", graph_file],
+                cli, ["generate", "--graph-file", graph_file],
             )
         assert result.exit_code == 0
-        # Status messages include entity names
         assert "users" in result.output or "Generated" in result.output
 
     def test_value_error_shows_error(self, runner, tmp_path):
-        """ValueError from generate_with_relationships shows as click error."""
         graph_file = _graph_yaml_file(tmp_path)
         with _patch_related_generator(side_effect=ValueError("Cycle detected")):
-            result = runner.invoke(cli, ["generate-related", "--graph-file", graph_file, "-q"])
+            result = runner.invoke(cli, ["generate", "--graph-file", graph_file, "-q"])
         assert result.exit_code != 0
         assert "Cycle detected" in result.output
 
     def test_malformed_graph_file_shows_error(self, runner, tmp_path):
         bad_file = tmp_path / "bad.yaml"
         bad_file.write_text("- this is a list\n- not a dict\n")
-        result = runner.invoke(cli, ["generate-related", "--graph-file", str(bad_file), "-q"])
+        result = runner.invoke(cli, ["generate", "--graph-file", str(bad_file), "-q"])
         assert result.exit_code != 0
         assert "Error" in result.output
 
@@ -193,7 +187,7 @@ class TestGenerateRelatedCmd:
         with _patch_related_generator(_SIMPLE_RESULT) as mock_cls:
             runner.invoke(
                 cli,
-                ["generate-related", "--graph-file", graph_file, "--provider", "anthropic", "-q"],
+                ["generate", "--graph-file", graph_file, "--provider", "anthropic", "-q"],
             )
         _, kwargs = mock_cls.call_args
         assert kwargs.get("provider") == "anthropic"
@@ -203,7 +197,7 @@ class TestGenerateRelatedCmd:
         with _patch_related_generator(_SIMPLE_RESULT) as mock_cls:
             runner.invoke(
                 cli,
-                ["generate-related", "--graph-file", graph_file, "--locale", "pl", "-q"],
+                ["generate", "--graph-file", graph_file, "--locale", "pl", "-q"],
             )
         _, kwargs = mock_cls.call_args
         assert kwargs.get("locale") == "pl"
@@ -213,17 +207,16 @@ class TestGenerateRelatedCmd:
         with _patch_related_generator(_SIMPLE_RESULT) as mock_cls:
             runner.invoke(
                 cli,
-                ["generate-related", "--graph-file", graph_file, "--no-validate", "-q"],
+                ["generate", "--graph-file", graph_file, "--no-validate", "-q"],
             )
         mock_gen = mock_cls.return_value
         _, kwargs = mock_gen.generate_with_relationships.call_args
         assert kwargs.get("validate") is False
 
     def test_graph_passed_to_generator(self, runner, tmp_path):
-        """The parsed graph dict is forwarded to generate_with_relationships."""
         graph_file = _graph_yaml_file(tmp_path)
         with _patch_related_generator(_SIMPLE_RESULT) as mock_cls:
-            runner.invoke(cli, ["generate-related", "--graph-file", graph_file, "-q"])
+            runner.invoke(cli, ["generate", "--graph-file", graph_file, "-q"])
         mock_gen = mock_cls.return_value
         call_args = mock_gen.generate_with_relationships.call_args
         graph_arg = call_args[0][0]
@@ -231,13 +224,21 @@ class TestGenerateRelatedCmd:
         assert "orders" in graph_arg
 
     def test_batch_size_injected_into_graph_nodes(self, runner, tmp_path):
-        """--batch-size is applied as default batch_size to all graph nodes."""
         graph_file = _graph_yaml_file(tmp_path)
         with _patch_related_generator(_SIMPLE_RESULT) as mock_cls:
             runner.invoke(
                 cli,
-                ["generate-related", "--graph-file", graph_file, "--batch-size", "3", "-q"],
+                ["generate", "--graph-file", graph_file, "--batch-size", "3", "-q"],
             )
         graph_arg = mock_cls.return_value.generate_with_relationships.call_args[0][0]
         assert graph_arg["users"]["batch_size"] == 3
         assert graph_arg["orders"]["batch_size"] == 3
+
+    def test_mutually_exclusive_with_context(self, runner, tmp_path):
+        graph_file = _graph_yaml_file(tmp_path)
+        result = runner.invoke(
+            cli,
+            ["generate", "--graph-file", graph_file, "--context", "ecommerce_customer", "-q"],
+        )
+        assert result.exit_code != 0
+        assert "mutually exclusive" in result.output.lower() or "Error" in result.output

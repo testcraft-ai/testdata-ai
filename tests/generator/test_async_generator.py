@@ -13,6 +13,7 @@ from testdata_ai.async_generator import (
     async_generate,
     generate_parallel,
 )
+from testdata_ai.result_types import GenerateResult
 
 
 # ---------------------------------------------------------------------------
@@ -406,10 +407,10 @@ class TestGenerateParallel:
 
 
 class TestAsyncGenerate:
-    async def test_returns_flat_list(self):
+    async def test_returns_generate_result(self):
         with _patch_generate_one([[_customer()], [_customer()], [_customer()]]):
             records = await async_generate("ecommerce_customer", count=3, parallelism=3)
-        assert isinstance(records, list)
+        assert isinstance(records, GenerateResult)
 
     async def test_count_split_equal(self):
         """count=3000, parallelism=3 → 3 specs of 1000."""

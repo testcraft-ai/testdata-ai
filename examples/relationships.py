@@ -1,9 +1,10 @@
 """
 Relationship generation examples.
 
-generate_with_relationships() generates multiple related entity datasets with
-referential integrity. Unlike Faker's sequential approach, child prompts include
-sample parent records so the AI produces semantically coherent data:
+generate() with a {"nodes": {...}} graph generates multiple related entity
+datasets with referential integrity. Unlike Faker's sequential approach,
+child prompts include sample parent records so the AI produces semantically
+coherent data:
   - Order amounts match parent customer's income tier
   - Shipment addresses match the order's destination
   - Employee salaries fit the parent company's size
@@ -12,7 +13,7 @@ Covered:
   1. E-commerce: customers → orders (2-level)
   2. Logistics: customers → orders → shipments (3-level chain)
   3. B2B: leads → employees (locale-aware, pl_PL)
-  4. Module-level convenience function
+  4. Module-level unified generate() function
   5. Graph YAML file + CLI (see examples/ecommerce_graph.yaml)
 
 Run:
@@ -22,7 +23,7 @@ Run:
 
 import json
 
-from testdata_ai import DataGenerator, generate_with_relationships
+from testdata_ai import DataGenerator, generate
 
 
 def section(title: str) -> None:
@@ -144,31 +145,39 @@ def example_b2b_locale():
         print(f"    {e.get('name', '?'):30s}  → {e['company']}")
 
 
-# ── 4. Module-level convenience function ─────────────────────────────────────
+# ── 4. Unified generate() function ───────────────────────────────────────────
 
-def example_convenience_function():
-    section("4. Module-level generate_with_relationships()")
+def example_unified_generate():
+    section("4. Unified generate() — {'nodes': {...}} dispatch")
 
-    result = generate_with_relationships(
+    result = generate(
         {
-            "customers": {"context": "ecommerce_customer", "count": 2},
-            "orders": {
-                "context": "restaurant_order",
-                "count": 4,
-                "parent": "customers",
-                "fk_field": "customer_email",
-                "parent_pk": "email",
-            },
+            "nodes": {
+                "customers": {"context": "ecommerce_customer", "count": 2},
+                "orders": {
+                    "context": "restaurant_order",
+                    "count": 4,
+                    "parent": "customers",
+                    "fk_field": "customer_email",
+                    "parent_pk": "email",
+                },
+            }
         },
         validate=True,
-        locale=None,
     )
 
+    # result is a RelationshipResult (dict subclass)
     print(f"\n  result.keys() = {list(result.keys())}")
     print(f"  customers    : {len(result['customers'])} records")
     print(f"  orders       : {len(result['orders'])} records")
     print(f"\n  First order:")
     print(f"  {json.dumps(result['orders'][0], indent=4)}")
+
+    # Convert to pandas DataFrames (requires pip install testdata-ai[pandas])
+    # dfs = result.to_dataframes()
+
+    # Export to JSON
+    # result.to_json("output.json")
 
 
 # ── 5. CLI usage hint ─────────────────────────────────────────────────────────
@@ -207,5 +216,5 @@ if __name__ == "__main__":
     example_ecommerce()
     example_three_level()
     example_b2b_locale()
-    example_convenience_function()
+    example_unified_generate()
     show_cli_hint()

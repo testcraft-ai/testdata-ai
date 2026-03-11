@@ -15,10 +15,6 @@ Run:
 from testdata_ai import (
     DataGenerator,
     generate,
-    generate_with_relationships,
-    generate_as_dataframe,
-    to_dataframe,
-    relationships_to_dataframes,
     register_context,
     ContextSchema,
 )
@@ -30,13 +26,13 @@ def section(title: str) -> None:
     print("=" * 60)
 
 
-# ── 1. to_dataframe() on any records list ─────────────────────────────────────
+# ── 1. result.to_dataframe() on any GenerateResult ────────────────────────────
 
 def example_basic():
-    section("1. to_dataframe() — flat records")
+    section("1. result.to_dataframe() — flat records")
 
-    records = generate("ecommerce_customer", count=5)
-    df = to_dataframe(records)
+    result = generate("ecommerce_customer", count=5)
+    df = result.to_dataframe()
 
     print(f"  shape : {df.shape}")
     print(f"  cols  : {list(df.columns)}")
@@ -44,12 +40,12 @@ def example_basic():
     print(df[["name", "email", "loyalty_tier"]].to_string(index=False))
 
 
-# ── 2. generate_as_dataframe() — one-liner convenience ────────────────────────
+# ── 2. One-liner with method chaining ─────────────────────────────────────────
 
 def example_one_liner():
-    section("2. generate_as_dataframe() — one-liner")
+    section("2. One-liner — generate().to_dataframe()")
 
-    df = generate_as_dataframe("banking_user", count=10)
+    df = generate("banking_user", count=10).to_dataframe()
 
     print(f"  shape  : {df.shape}")
     print(f"  dtypes :\n{df.dtypes.to_string()}")
@@ -100,10 +96,10 @@ def example_nested():
         ),
     )
 
-    records = generate("product_nested", count=3)
+    result = generate("product_nested", count=3)
 
-    df_flat = to_dataframe(records, flatten=True)
-    df_nested = to_dataframe(records, flatten=False)
+    df_flat = result.to_dataframe(flatten=True)
+    df_nested = result.to_dataframe(flatten=False)
 
     print("  flatten=True  columns:", list(df_flat.columns))
     print("  flatten=False columns:", list(df_nested.columns))
@@ -113,27 +109,28 @@ def example_nested():
     print(df_flat[["sku", "name"] + dim_cols].to_string(index=False))
 
 
-# ── 5. relationships_to_dataframes() — multi-entity ──────────────────────────
+# ── 5. RelationshipResult.to_dataframes() — multi-entity ─────────────────────
 
 def example_relationships():
-    section("5. relationships_to_dataframes() — multi-entity")
+    section("5. RelationshipResult.to_dataframes() — multi-entity")
 
-    graph = {
-        "customers": {
-            "context": "ecommerce_customer",
-            "count": 3,
-        },
-        "orders": {
-            "context": "restaurant_order",
-            "count": 9,
-            "parent": "customers",
-            "fk_field": "customer_email",
-            "parent_pk": "email",
-        },
-    }
+    result = generate({
+        "nodes": {
+            "customers": {
+                "context": "ecommerce_customer",
+                "count": 3,
+            },
+            "orders": {
+                "context": "restaurant_order",
+                "count": 9,
+                "parent": "customers",
+                "fk_field": "customer_email",
+                "parent_pk": "email",
+            },
+        }
+    })
 
-    result = generate_with_relationships(graph)
-    dfs = relationships_to_dataframes(result)
+    dfs = result.to_dataframes()
 
     for entity, df in dfs.items():
         print(f"\n  [{entity}]  shape={df.shape}")

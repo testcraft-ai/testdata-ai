@@ -1,11 +1,14 @@
-"""Tests for testdata_ai.generator — generate_from_model."""
+"""Tests for testdata_ai.generator — generate_from_model (DataGenerator method and dispatch)."""
 
 import json
 import pytest
 from unittest.mock import patch, MagicMock
 
 from testdata_ai.contexts import ValidationError
-from testdata_ai.generator import generate_from_model
+from testdata_ai.generator import generate
+from testdata_ai.result_types import GenerateResult
+
+_DG_DEFAULTS = dict(provider=None, model=None, temperature=None, max_tokens=None, api_key=None, locale=None)
 
 
 class _FakeModel:
@@ -65,30 +68,47 @@ class TestGenerateFromModel:
         with pytest.raises(ValueError, match="not valid JSON"):
             gen.generate_from_model(_FakeModel, count=1)
 
-    def test_module_level_generate_from_model(self):
+    def test_dispatch_type_calls_generate_from_model(self):
         records = [{"name": "Bob", "age": 25}]
         with patch("testdata_ai.generator.DataGenerator") as mock_cls:
             mock_instance = MagicMock()
             mock_instance.generate_from_model.return_value = records
             mock_cls.return_value = mock_instance
 
-            result = generate_from_model(_FakeModel, count=1)
+            result = generate(_FakeModel, count=1)
 
+        assert isinstance(result, GenerateResult)
         assert result == records
-        mock_cls.assert_called_once_with(locale=None)
+        mock_cls.assert_called_once_with(**_DG_DEFAULTS)
         mock_instance.generate_from_model.assert_called_once_with(
             _FakeModel, 1, True, field_providers=None, unique_fields=None
         )
 
-    def test_module_level_passes_locale(self):
+    def test_dispatch_type_passes_locale(self):
         with patch("testdata_ai.generator.DataGenerator") as mock_cls:
             mock_instance = MagicMock()
             mock_instance.generate_from_model.return_value = []
             mock_cls.return_value = mock_instance
 
-            generate_from_model(_FakeModel, count=1, locale="pl")
+            generate(_FakeModel, count=1, locale="pl")
 
-        mock_cls.assert_called_once_with(locale="pl")
+        mock_cls.assert_called_once_with(**{**_DG_DEFAULTS, "locale": "pl"})
+
+    def test_dispatch_dict_schema_calls_generate_from_model(self):
+        schema = {
+            "title": "Widget",
+            "properties": {"name": {"type": "string"}, "qty": {"type": "integer"}},
+        }
+        records = [{"name": "Bolt", "qty": 5}]
+        with patch("testdata_ai.generator.DataGenerator") as mock_cls:
+            mock_instance = MagicMock()
+            mock_instance.generate_from_model.return_value = records
+            mock_cls.return_value = mock_instance
+
+            result = generate(schema, count=1)
+
+        assert isinstance(result, GenerateResult)
+        mock_instance.generate_from_model.assert_called_once()
 
     def test_generate_from_model_applies_field_providers(self, make_generator):
         records = [{"name": "Alice", "age": 30, "email": "ai@gen.com"}]
@@ -109,7 +129,7 @@ class TestGenerateFromModel:
         assert result[0]["email"] == "faker@example.com"
         assert result[0]["name"] == "Alice"
 
-    def test_module_level_generate_from_model_passes_field_providers(self):
+    def test_dispatch_passes_field_providers(self):
         records = [{"name": "Bob", "age": 25}]
         with patch("testdata_ai.generator.DataGenerator") as mock_cls:
             mock_instance = MagicMock()
@@ -117,9 +137,9 @@ class TestGenerateFromModel:
             mock_cls.return_value = mock_instance
 
             fp = {"email": "faker:email"}
-            result = generate_from_model(_FakeModel, count=1, field_providers=fp)
+            result = generate(_FakeModel, count=1, field_providers=fp)
 
-        assert result == records
+        assert isinstance(result, GenerateResult)
         mock_instance.generate_from_model.assert_called_once_with(
             _FakeModel, 1, True, field_providers=fp, unique_fields=None
         )

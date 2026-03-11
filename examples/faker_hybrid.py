@@ -13,7 +13,7 @@ Run:
 
 import json
 
-from testdata_ai import DataGenerator, generate_from_model, register_context, ContextSchema
+from testdata_ai import DataGenerator, generate, register_context, ContextSchema
 
 
 def section(title: str) -> None:
@@ -125,7 +125,7 @@ def example_pydantic():
         },
     }
 
-    records = generate_from_model(
+    records = generate(
         json_schema,
         count=3,
         field_providers={

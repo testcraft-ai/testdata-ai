@@ -612,31 +612,26 @@ class TestGenerateWithRelationships:
         # Faker-overridden field should use the mocked uuid4
         assert result["children"][0]["cid"] == "mocked-uuid"
 
-    def test_module_level_convenience_function(self):
-        """Module-level generate_with_relationships() delegates to DataGenerator."""
-        from testdata_ai.generator import generate_with_relationships
+    def test_dispatch_generate_with_relationships(self):
+        """generate() with graph dict delegates to DataGenerator.generate_with_relationships()."""
+        from testdata_ai.generator import generate
+        from testdata_ai.result_types import RelationshipResult
 
+        graph = {"nodes": {"users": {"context": "ecommerce_customer", "count": 1}}}
         users = [_USER_SAMPLE.copy()]
         with patch("testdata_ai.generator.DataGenerator") as mock_cls:
             mock_gen = MagicMock()
             mock_gen.generate_with_relationships.return_value = {"users": users}
             mock_cls.return_value = mock_gen
 
-            result = generate_with_relationships(
-                {"users": {"context": "ecommerce_customer", "count": 1}},
-                validate=False,
-                locale="pl",
-            )
+            result = generate(graph, validate=False, locale="pl")
 
-        mock_cls.assert_called_once_with(locale="pl")
+        assert isinstance(result, RelationshipResult)
         mock_gen.generate_with_relationships.assert_called_once_with(
-            {"users": {"context": "ecommerce_customer", "count": 1}},
-            validate=False,
+            graph["nodes"], validate=False, progress_callback=None
         )
-        assert result == {"users": users}
 
     def test_public_api_export(self):
-        """generate_with_relationships is exported from the top-level package."""
+        """generate is exported from the top-level package."""
         import testdata_ai
-        assert hasattr(testdata_ai, "generate_with_relationships")
-        assert "generate_with_relationships" in testdata_ai.__all__
+        assert hasattr(testdata_ai, "generate")

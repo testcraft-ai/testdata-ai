@@ -87,11 +87,13 @@ class TestDataGenerator:
         assert len(result) == 1
 
     def test_generate_warns_on_count_mismatch(self, make_generator, caplog):
+        # make_generator uses return_value (same 1-record response every call),
+        # so 3 retries × 1 record = 3 total, still short of 5.
         records = [CONTEXTS["banking_user"].sample]
         gen = make_generator(json.dumps({"data": records}))
         with caplog.at_level(logging.WARNING, logger="testdata_ai.generator"):
             gen.generate("banking_user", count=5, validate=False)
-        assert "Requested 5 records but received 1" in caplog.text
+        assert "Requested 5 records but received 3" in caplog.text
 
     def test_generate_dict_with_multiple_lists_uses_first(self, make_generator):
         response = json.dumps({"data": [{"a": 1}], "extra": [{"b": 2}]})

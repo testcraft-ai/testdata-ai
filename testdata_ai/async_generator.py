@@ -6,7 +6,7 @@ Each synchronous DataGenerator / AI provider call runs in a thread pool
 via asyncio.to_thread() (available since Python 3.9).
 """
 
-__all__ = ["GenerateSpec", "generate_parallel", "async_generate"]
+__all__ = ["GenerateSpec", "async_generate"]
 
 import asyncio
 import logging
@@ -368,106 +368,149 @@ async def generate_parallel(
 
 
 async def async_generate(
-    context: str,
-    count: int,
+    input: Any,
+    count: int = 10,
+    *,
     parallelism: int = 3,
     batch_size: Optional[int] = None,
+    validate: bool = True,
     locale: Optional[str] = None,
     global_unique_fields: Optional[List[str]] = None,
     provider: Optional[str] = None,
+    field_providers: Optional[Dict[str, Any]] = None,
+    unique_fields: Optional[List[str]] = None,
+    progress_callback: Optional[Any] = None,
     **generator_kwargs: Any,
-) -> List[Dict[str, Any]]:
-    """Generate records for a single context using parallel AI calls.
-
-    A convenience wrapper around :func:`generate_parallel` for the common
-    case of generating many records from one context. Splits ``count`` into
-    batches and runs them concurrently with a semaphore cap.
-
-    **Batch splitting:**
-
-    - ``batch_size`` defaults to ``ceil(count / parallelism)`` — one batch
-      per worker, all run simultaneously.
-    - When ``batch_size`` is set explicitly, the total number of batches may
-      exceed ``parallelism``. The semaphore ensures at most ``parallelism``
-      batches run at the same time ("waves").
-    - The **last batch** receives the remainder and may be smaller than the
-      others.
-
-    Examples::
-
-        # 3 batches × 1000, all at once (default batch_size)
-        records = await async_generate("ecommerce_customer", 3000, parallelism=3)
-
-        # 9 batches × 1000, max 3 concurrent (3 waves of 3)
-        records = await async_generate(
-            "ecommerce_customer", 9000, parallelism=3, batch_size=1000
-        )
-
-        # Uneven split: count=10, parallelism=3 → batches [4, 4, 2]
-        records = await async_generate("ecommerce_customer", 10, parallelism=3)
+):
+    """Generate test data asynchronously with automatic type dispatch.
 
     Args:
-        context:   Context identifier (e.g. 'ecommerce_customer').
-        count:     Total number of records to generate.
-        parallelism: Maximum number of concurrent AI calls (semaphore limit).
-        batch_size: Records per AI call. Defaults to ceil(count/parallelism).
-        locale:    BCP 47 locale tag passed to every batch (e.g. 'pl', 'ja').
-            None → AI defaults to English.
-        global_unique_fields: Field names deduped across all batches via Faker.
+        input: What to generate from. Accepts:
+            - ``str``: context name (e.g. ``"ecommerce_customer"``)
+            - ``type`` or ``dict`` without ``"nodes"`` key: Pydantic model class
+              or JSON Schema dict
+            - ``dict`` with ``"nodes"`` key: relationship graph
+            - ``list`` of :class:`GenerateSpec`: parallel generation tasks
+        count: Number of records (ignored for graph and list inputs).
+        parallelism: Max concurrent AI calls when using context-name dispatch.
+        batch_size: Records per AI call for context-name dispatch.
+        validate: Validate generated records against schema.
+        locale: BCP 47 locale tag (e.g. ``"pl"``, ``"ja"``).
+        global_unique_fields: Fields deduplicated across parallel tasks.
             Requires ``pip install testdata-ai[faker]``.
-        provider:  AI provider name; None → reads from AI_PROVIDER env var.
-        **generator_kwargs: Extra kwargs forwarded to DataGenerator().
+        provider: AI provider name; None reads from AI_PROVIDER env var.
+        field_providers: Faker overrides for specific fields. Only used for
+            context and model dispatch.
+        unique_fields: Subset of field_providers keys requiring uniqueness.
+            Only used for context and model dispatch.
+        progress_callback: Called with progress string before each AI call.
+            Only used for graph dispatch.
+        **generator_kwargs: Extra kwargs forwarded to DataGenerator()
+            (e.g. model, temperature, max_tokens).
             Do NOT pass ``locale=`` here; use the explicit ``locale`` param.
 
     Returns:
-        Flat list of ``count`` (approximately) generated record dicts.
+        :class:`GenerateResult` for str/type/dict-schema inputs,
+        :class:`RelationshipResult` for graph-dict and list-of-specs inputs.
 
     Raises:
+        TypeError: If input type is not supported.
         ValueError: If count < 1 or parallelism < 1.
         ImportError: If global_unique_fields set and faker not installed.
+
+    Examples::
+
+        result = await async_generate("ecommerce_customer", 3000, parallelism=3)
+        result = await async_generate(MyModel, count=5)
+        result = await async_generate({"nodes": {...}})
+        result = await async_generate([GenerateSpec("ecommerce_customer", 100), ...])
     """
-    if count < 1:
-        raise ValueError("count must be >= 1")
-    if parallelism < 1:
-        raise ValueError("parallelism must be >= 1")
+    from testdata_ai.result_types import GenerateResult, RelationshipResult
+    from testdata_ai.generator import DataGenerator
 
-    effective_batch = batch_size or math.ceil(count / parallelism)
+    # str → parallel batch generation (original async_generate behavior)
+    if isinstance(input, str):
+        context = input
+        if count < 1:
+            raise ValueError("count must be >= 1")
+        if parallelism < 1:
+            raise ValueError("parallelism must be >= 1")
 
-    # Build batch list; last batch may be smaller.
-    batch_counts: List[int] = []
-    remaining = count
-    while remaining > 0:
-        batch_counts.append(min(effective_batch, remaining))
-        remaining -= effective_batch
+        effective_batch = batch_size or math.ceil(count / parallelism)
 
-    # Validate Faker early.
-    manager: Optional[_UniqueFieldManager] = None
-    if global_unique_fields:
-        manager = _UniqueFieldManager(global_unique_fields, locale=locale)
+        batch_counts: List[int] = []
+        remaining = count
+        while remaining > 0:
+            batch_counts.append(min(effective_batch, remaining))
+            remaining -= effective_batch
 
-    sem = asyncio.Semaphore(parallelism)
-    batch_ids = [uuid.uuid4().hex[:8] for _ in batch_counts]
-    specs = [GenerateSpec(context, n, locale=locale) for n in batch_counts]
+        manager: Optional[_UniqueFieldManager] = None
+        if global_unique_fields:
+            manager = _UniqueFieldManager(global_unique_fields, locale=locale)
 
-    logger.info(
-        "async_generate: %d records for '%s' → %d batches, max %d concurrent",
-        count,
-        context,
-        len(batch_counts),
-        parallelism,
+        sem = asyncio.Semaphore(parallelism)
+        batch_ids = [uuid.uuid4().hex[:8] for _ in batch_counts]
+        specs = [GenerateSpec(context, n, locale=locale) for n in batch_counts]
+
+        logger.info(
+            "async_generate: %d records for '%s' → %d batches, max %d concurrent",
+            count,
+            context,
+            len(batch_counts),
+            parallelism,
+        )
+
+        async def _limited(spec: GenerateSpec, bid: str) -> List[Dict[str, Any]]:
+            async with sem:
+                return await _generate_one(spec, provider, bid, **generator_kwargs)
+
+        results_list: List[List[Dict[str, Any]]] = await asyncio.gather(
+            *[_limited(s, bid) for s, bid in zip(specs, batch_ids)]
+        )
+
+        all_records = [record for batch in results_list for record in batch]
+
+        if manager is not None:
+            all_records = manager.deduplicate({"_": all_records})["_"]
+
+        return GenerateResult(all_records)
+
+    # type (Pydantic model) or dict without "nodes" → from_model in thread
+    if isinstance(input, type) or (isinstance(input, dict) and "nodes" not in input):
+        def _sync_from_model():
+            gen = DataGenerator(provider=provider, locale=locale, **generator_kwargs)
+            return gen.generate_from_model(
+                input, count, validate,
+                field_providers=field_providers,
+                unique_fields=unique_fields,
+            )
+
+        records = await asyncio.to_thread(_sync_from_model)
+        return GenerateResult(records)
+
+    # dict with "nodes" → relationship graph in thread
+    if isinstance(input, dict) and "nodes" in input:
+        def _sync_relationships():
+            gen = DataGenerator(provider=provider, locale=locale, **generator_kwargs)
+            return gen.generate_with_relationships(
+                input["nodes"], validate=validate, progress_callback=progress_callback
+            )
+
+        result = await asyncio.to_thread(_sync_relationships)
+        return RelationshipResult(result)
+
+    # list[GenerateSpec] → generate_parallel
+    if isinstance(input, list):
+        result = await generate_parallel(
+            input,
+            global_unique_fields=global_unique_fields,
+            provider=provider,
+            **generator_kwargs,
+        )
+        return RelationshipResult(result)
+
+    raise TypeError(
+        f"Unsupported input type: {type(input).__name__}. "
+        "Expected: str (context name), type or dict (model/schema), "
+        "dict with 'nodes' key (graph), or list of GenerateSpec (parallel)."
     )
-
-    async def _limited(spec: GenerateSpec, bid: str) -> List[Dict[str, Any]]:
-        async with sem:
-            return await _generate_one(spec, provider, bid, **generator_kwargs)
-
-    results_list: List[List[Dict[str, Any]]] = await asyncio.gather(
-        *[_limited(s, bid) for s, bid in zip(specs, batch_ids)]
-    )
-
-    all_records = [record for batch in results_list for record in batch]
-
-    if manager is not None:
-        all_records = manager.deduplicate({"_": all_records})["_"]
-
-    return all_records

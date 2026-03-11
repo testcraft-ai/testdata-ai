@@ -1,5 +1,5 @@
 """
-generate_from_model examples — testdata-ai.
+generate() from Pydantic model / JSON Schema examples — testdata-ai.
 
 Covers:
   - Pydantic v2 model (simple + nested)
@@ -15,7 +15,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
-from testdata_ai import DataGenerator, generate_from_model
+from testdata_ai import DataGenerator, generate
 from testdata_ai.schema_adapter import model_to_context_schema
 
 
@@ -52,7 +52,7 @@ class SupportTicket(BaseModel):
 
 # ── Helpers ───────────────────────────────────────────────────────
 
-def pp(data: list) -> None:
+def pp(data) -> None:
     """Pretty-print a list of records."""
     for i, record in enumerate(data, 1):
         print(f"\n  [{i}] {json.dumps(record, indent=4, ensure_ascii=False)}")
@@ -63,8 +63,8 @@ def pp(data: list) -> None:
 def main():
 
     # 1. Simple Pydantic model
-    section("1. Simple Pydantic model → generate_from_model")
-    data = generate_from_model(Customer, count=2)
+    section("1. Simple Pydantic model → generate(Model)")
+    data = generate(Customer, count=2)
     print(f"  Generated {len(data)} Customer records:")
     pp(data)
 
@@ -80,13 +80,13 @@ def main():
 
     # 3. Nested Pydantic model (Address inside Customer)
     section("3. Nested Pydantic model")
-    data = generate_from_model(Customer, count=2)
+    data = generate(Customer, count=2)
     print(f"  Generated {len(data)} nested Customer records:")
     pp(data)
 
     # 4. Optional fields — validate=False avoids errors when AI omits nullable fields
     section("4. Optional fields → validate=False")
-    data = generate_from_model(SupportTicket, count=3, validate=False)
+    data = generate(SupportTicket, count=3, validate=False)
     print(f"  Generated {len(data)} SupportTicket records (assignee may be null):")
     pp(data)
 
@@ -104,13 +104,13 @@ def main():
             "tags":     {"type": "array", "items": {"type": "string"}},
         },
     }
-    data = generate_from_model(product_schema, count=3)
+    data = generate(product_schema, count=3)
     print(f"  Generated {len(data)} Product records:")
     pp(data)
 
     # 6. Locale support
     section("6. Locale: pl (Polish)")
-    data = generate_from_model(Customer, count=2, locale="pl")
+    data = generate(Customer, count=2, locale="pl")
     print(f"  Generated {len(data)} Polish Customer records:")
     pp(data)
 
@@ -126,6 +126,12 @@ def main():
     pp(customers)
     print(f"\n  Tickets ({len(tickets)}):")
     pp(tickets)
+
+    # 8. Export helpers on GenerateResult
+    section("8. Export helpers — to_json(), to_csv(), to_yaml()")
+    result = generate(Customer, count=2)
+    print(f"  JSON:\n{result.to_json()[:200]}...")
+    print(f"\n  CSV (first 200 chars):\n{result.to_csv()[:200]}...")
 
 
 if __name__ == "__main__":

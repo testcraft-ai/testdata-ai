@@ -1,4 +1,4 @@
-"""Tests for testdata_ai.generator — batched generation and module-level convenience functions."""
+"""Tests for testdata_ai.generator — batched generation and generate() convenience function."""
 
 import json
 import logging
@@ -6,12 +6,31 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 from testdata_ai.contexts import CONTEXTS
-from testdata_ai.generator import DataGenerator, generate, generate_batched
+from testdata_ai.generator import DataGenerator, generate
+from testdata_ai.result_types import GenerateResult
+
+
+def _make_gen_with_responses(responses):
+    """Create a DataGenerator whose provider returns each response in turn."""
+    with patch("testdata_ai.generator.get_provider_config") as mock_config, \
+         patch("testdata_ai.generator.get_provider") as mock_get_prov:
+        mock_config.return_value = MagicMock(
+            provider="openai", api_key="sk-fake",
+            model="test-model", temperature=0.7, max_tokens=4096,
+        )
+        mock_prov = MagicMock()
+        mock_prov.generate.side_effect = responses
+        mock_get_prov.return_value = mock_prov
+        gen = DataGenerator()
+    gen._mock_prov = mock_prov
+    return gen
+
+_DG_DEFAULTS = dict(provider=None, model=None, temperature=None, max_tokens=None, api_key=None, locale=None)
 
 
 class TestGenerateConvenienceFunction:
 
-    def test_calls_generator_and_returns_records(self):
+    def test_calls_generator_and_returns_generate_result(self):
         sample = CONTEXTS["banking_user"].sample
         with patch("testdata_ai.generator.DataGenerator") as mock_cls:
             mock_instance = MagicMock()
@@ -20,8 +39,9 @@ class TestGenerateConvenienceFunction:
 
             result = generate("banking_user", count=1)
 
+        assert isinstance(result, GenerateResult)
         assert result == [sample]
-        mock_cls.assert_called_once_with(locale=None)
+        mock_cls.assert_called_once_with(**_DG_DEFAULTS)
         mock_instance.generate_batched.assert_called_once_with("banking_user", 1, 10, validate=True)
 
     def test_uses_default_count_of_10(self):
@@ -124,9 +144,10 @@ class TestGenerateBatched:
         assert len(batches) == 2
         assert mock_prov.generate.call_count == 2
 
-    def test_no_extra_calls_when_ai_underdelivers(self):
-        """AI returning fewer records than requested must not cause extra API calls."""
+    def test_advances_to_next_batch_even_when_ai_underdelivers(self):
+        """generate_batched() yields each batch and advances even when generate() returns short."""
         sample = CONTEXTS["banking_user"].sample
+        # generate() now retries up to 3× per batch; provide enough responses for 2 batches.
         with patch("testdata_ai.generator.get_provider_config") as mock_config, \
              patch("testdata_ai.generator.get_provider") as mock_get_prov:
             mock_config.return_value = MagicMock(
@@ -134,10 +155,7 @@ class TestGenerateBatched:
                 model="test-model", temperature=0.7, max_tokens=4096,
             )
             mock_prov = MagicMock()
-            mock_prov.generate.side_effect = [
-                json.dumps({"data": [sample] * 3}),
-                json.dumps({"data": [sample] * 3}),
-            ]
+            mock_prov.generate.side_effect = [json.dumps({"data": [sample] * 3})] * 6
             mock_get_prov.return_value = mock_prov
             gen = DataGenerator()
 
@@ -145,7 +163,7 @@ class TestGenerateBatched:
             mock_prompt.side_effect = lambda _, n, locale=None: f"generate {n}"
             batches = list(gen.generate_batched("banking_user", count=20, batch_size=10, validate=False))
 
-        assert mock_prov.generate.call_count == 2
+        assert len(batches) == 2
         assert all(len(b) > 0 for b in batches)
 
     def test_empty_batch_stops_iteration_without_yielding(self, make_generator):
@@ -172,6 +190,8 @@ class TestGenerateBatched:
 
     def test_warns_when_total_yielded_less_than_count(self, caplog):
         sample = CONTEXTS["banking_user"].sample
+        # generate() now retries up to 3× per batch; 2 batches × 3 retries = 6 responses needed.
+        # With 3 records per response, each batch yields 9, total = 18 < 20 → warning.
         with patch("testdata_ai.generator.get_provider_config") as mock_config, \
              patch("testdata_ai.generator.get_provider") as mock_get_prov:
             mock_config.return_value = MagicMock(
@@ -179,10 +199,7 @@ class TestGenerateBatched:
                 model="test-model", temperature=0.7, max_tokens=4096,
             )
             mock_prov = MagicMock()
-            mock_prov.generate.side_effect = [
-                json.dumps({"data": [sample] * 3}),
-                json.dumps({"data": [sample] * 3}),
-            ]
+            mock_prov.generate.side_effect = [json.dumps({"data": [sample] * 3})] * 6
             mock_get_prov.return_value = mock_prov
             gen = DataGenerator()
 
@@ -190,29 +207,83 @@ class TestGenerateBatched:
             batches = list(gen.generate_batched("banking_user", count=20, batch_size=10, validate=False))
 
         total = sum(len(b) for b in batches)
-        assert total == 6
-        assert "Requested 20 total records but generated 6" in caplog.text
+        assert total == 18
+        assert "Requested 20 total records but generated 18" in caplog.text
 
-    def test_module_level_generate_batched(self):
+
+class TestGenerateRetry:
+    """DataGenerator.generate() retries when AI returns fewer records than requested."""
+
+    def test_retries_on_short_response_and_returns_full_count(self):
         sample = CONTEXTS["banking_user"].sample
-        with patch("testdata_ai.generator.DataGenerator") as mock_cls:
-            mock_instance = MagicMock()
-            mock_instance.generate_batched.return_value = iter([[sample]])
-            mock_cls.return_value = mock_instance
+        gen = _make_gen_with_responses([
+            json.dumps({"data": [sample] * 9}),  # 9 instead of 10
+            json.dumps({"data": [sample] * 5}),  # top-up (trimmed to 1)
+        ])
+        result = gen.generate("banking_user", count=10, validate=False)
+        assert len(result) == 10
+        assert gen._mock_prov.generate.call_count == 2
 
-            batches = list(generate_batched("banking_user", count=1, batch_size=10))
-
-        assert batches == [[sample]]
-        mock_cls.assert_called_once_with(locale=None)
-        mock_instance.generate_batched.assert_called_once_with("banking_user", 1, 10, validate=True)
-
-    def test_module_level_generate_batched_validate_false(self):
+    def test_retry_requests_only_missing_count(self):
         sample = CONTEXTS["banking_user"].sample
-        with patch("testdata_ai.generator.DataGenerator") as mock_cls:
-            mock_instance = MagicMock()
-            mock_instance.generate_batched.return_value = iter([[sample]])
-            mock_cls.return_value = mock_instance
+        gen = _make_gen_with_responses([
+            json.dumps({"data": [sample] * 7}),
+            json.dumps({"data": [sample] * 3}),
+        ])
+        with patch("testdata_ai.generator.get_prompt") as mock_prompt:
+            mock_prompt.side_effect = lambda ctx, n, locale=None: f"generate {n}"
+            gen.generate("banking_user", count=10, validate=False)
 
-            list(generate_batched("banking_user", count=1, batch_size=10, validate=False))
+        counts = [call.args[1] for call in mock_prompt.call_args_list]
+        assert counts == [10, 3]
 
-        mock_instance.generate_batched.assert_called_once_with("banking_user", 1, 10, validate=False)
+    def test_stops_after_three_attempts(self):
+        sample = CONTEXTS["banking_user"].sample
+        gen = _make_gen_with_responses([
+            json.dumps({"data": [sample] * 3}),
+            json.dumps({"data": [sample] * 3}),
+            json.dumps({"data": [sample] * 3}),
+        ])
+        result = gen.generate("banking_user", count=15, validate=False)
+        assert gen._mock_prov.generate.call_count == 3
+        assert len(result) == 9
+
+    def test_stops_on_empty_response(self):
+        sample = CONTEXTS["banking_user"].sample
+        gen = _make_gen_with_responses([
+            json.dumps({"data": [sample] * 5}),
+            json.dumps({"data": []}),
+        ])
+        result = gen.generate("banking_user", count=10, validate=False)
+        assert gen._mock_prov.generate.call_count == 2
+        assert len(result) == 5
+
+    def test_trims_excess_records_from_retry(self):
+        sample = CONTEXTS["banking_user"].sample
+        gen = _make_gen_with_responses([
+            json.dumps({"data": [sample] * 8}),
+            json.dumps({"data": [sample] * 10}),  # more than needed
+        ])
+        result = gen.generate("banking_user", count=10, validate=False)
+        assert len(result) == 10
+
+    def test_warns_when_still_short_after_all_retries(self, caplog):
+        sample = CONTEXTS["banking_user"].sample
+        gen = _make_gen_with_responses([
+            json.dumps({"data": [sample] * 3}),
+            json.dumps({"data": [sample] * 3}),
+            json.dumps({"data": [sample] * 3}),
+        ])
+        with caplog.at_level(logging.WARNING, logger="testdata_ai.generator"):
+            gen.generate("banking_user", count=15, validate=False)
+        assert "Requested 15 records but received 9" in caplog.text
+
+    def test_no_retry_when_exact_count_on_first_call(self):
+        sample = CONTEXTS["banking_user"].sample
+        gen = _make_gen_with_responses([
+            json.dumps({"data": [sample] * 10}),
+        ])
+        result = gen.generate("banking_user", count=10, validate=False)
+        assert gen._mock_prov.generate.call_count == 1
+        assert len(result) == 10
+

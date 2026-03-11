@@ -3,13 +3,14 @@ Core test data generator - provider agnostic.
 Supports OpenAI, Anthropic, and other AI providers.
 """
 
-__all__ = ["DataGenerator", "generate", "generate_batched", "generate_from_model", "generate_with_relationships", "generate_as_dataframe"]
+__all__ = ["DataGenerator", "generate"]
 
+import asyncio
 import json
 import math
 import os
 import random
-from typing import Callable, Dict, Iterator, List, Any, Optional
+from typing import Callable, Dict, Iterator, List, Any, Optional, Union
 import logging
 
 from testdata_ai.prompts import get_prompt, _build_prompt
@@ -153,13 +154,26 @@ class DataGenerator:
 
         logger.info(f"Generating {count} records for context: {context}")
 
-        prompt = get_prompt(context, count, locale=self.locale)  # raises ValueError if context unknown
-        logger.debug(f"Sending prompt to {self.provider.__class__.__name__}")
+        schema = get_context_schema(context)  # raises ValueError if context unknown
 
-        response = _strip_markdown_fences(self.provider.generate(prompt))
-        records = _parse_ai_response(response)
+        # Retry up to 3 times to fill any shortfall from a low-yield AI response.
+        # Raw AI records are accumulated before Faker is applied so that Faker's
+        # unique proxy sees the full dataset in a single call.
+        raw_records: List[Dict[str, Any]] = []
+        for _ in range(3):
+            needed = count - len(raw_records)
+            if needed <= 0:
+                break
+            prompt = get_prompt(context, needed, locale=self.locale)
+            logger.debug(f"Sending prompt to {self.provider.__class__.__name__} (need {needed})")
+            response = _strip_markdown_fences(self.provider.generate(prompt))
+            batch = _parse_ai_response(response)
+            if not batch:
+                break
+            raw_records.extend(batch)
 
-        schema = get_context_schema(context)
+        records = raw_records[:count]
+
         if schema.field_providers:
             from testdata_ai.faker_bridge import apply_faker_fields
             records = apply_faker_fields(
@@ -212,11 +226,20 @@ class DataGenerator:
         schema = model_to_context_schema(model_or_schema)
         logger.info(f"Generating {count} records from schema: {schema.description}")
 
-        prompt = _build_prompt(schema, count, locale=self.locale)
-        logger.debug(f"Sending prompt to {self.provider.__class__.__name__}")
+        raw_records: List[Dict[str, Any]] = []
+        for _ in range(3):
+            needed = count - len(raw_records)
+            if needed <= 0:
+                break
+            prompt = _build_prompt(schema, needed, locale=self.locale)
+            logger.debug(f"Sending prompt to {self.provider.__class__.__name__} (need {needed})")
+            response = _strip_markdown_fences(self.provider.generate(prompt))
+            batch = _parse_ai_response(response)
+            if not batch:
+                break
+            raw_records.extend(batch)
 
-        response = _strip_markdown_fences(self.provider.generate(prompt))
-        records = _parse_ai_response(response)
+        records = raw_records[:count]
 
         if field_providers:
             from testdata_ai.faker_bridge import apply_faker_fields
@@ -498,128 +521,139 @@ def _strip_markdown_fences(text: str) -> str:
     return text.strip()
 
 
-def generate_batched(
-    context: str,
+def generate(
+    input: Union[str, type, Dict[str, Any], List[Any]],
     count: int = 10,
+    *,
+    validate: bool = True,
+    locale: Optional[str] = None,
     batch_size: int = 10,
-    validate: bool = True,
-    locale: Optional[str] = None,
-) -> Iterator[List[Dict[str, Any]]]:
-    """Convenience function for batched generation.
-
-    Yields one completed batch at a time. Creates a new DataGenerator each
-    call. For repeated use, instantiate DataGenerator directly.
-
-    Example:
-        >>> from testdata_ai.generator import generate_batched
-        >>> for batch in generate_batched('ecommerce_customer', 50, batch_size=10):
-        ...     process(batch)
-    """
-    gen = DataGenerator(locale=locale)
-    yield from gen.generate_batched(context, count, batch_size, validate=validate)
-
-
-def generate_from_model(
-    model_or_schema,
-    count: int = 10,
-    validate: bool = True,
-    locale: Optional[str] = None,
     field_providers: Optional[Dict[str, str]] = None,
     unique_fields: Optional[List[str]] = None,
-) -> List[Dict[str, Any]]:
-    """Convenience function: generate test data from a Pydantic model or JSON Schema dict.
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    api_key: Optional[str] = None,
+    global_unique_fields: Optional[List[str]] = None,
+    progress_callback: Optional[Callable[[str], None]] = None,
+):
+    """Generate test data with automatic type dispatch.
 
-    Creates a new DataGenerator each call. For repeated use, instantiate
-    DataGenerator directly and call generate_from_model() on it.
+    Args:
+        input: What to generate from. Accepts:
+            - ``str``: context name (e.g. ``"ecommerce_customer"``)
+            - ``type`` or ``dict`` without ``"nodes"`` key: Pydantic model class
+              or JSON Schema dict
+            - ``dict`` with ``"nodes"`` key: relationship graph
+            - ``list`` of :class:`GenerateSpec`: parallel generation tasks
+        count: Number of records (ignored for graph and list inputs).
+        validate: Validate generated records against schema (default True).
+        locale: BCP 47 locale tag (e.g. ``"pl"``, ``"ja"``).
+        batch_size: Records per AI call when using context-name dispatch.
+        field_providers: Faker overrides for specific fields, e.g.
+            ``{"email": "faker:email"}``. Only used for context and model dispatch.
+        unique_fields: Subset of field_providers keys that must be unique within
+            a batch. Only used for context and model dispatch.
+        provider: AI provider name; None reads from AI_PROVIDER env var.
+        model: Model name; None uses provider default.
+        temperature: Sampling temperature 0.0–1.0.
+        max_tokens: Maximum tokens for AI response.
+        api_key: API key (requires provider to be set).
+        global_unique_fields: Fields deduplicated across all parallel tasks.
+            Requires ``pip install testdata-ai[faker]``. Only used for list dispatch.
+        progress_callback: Called with a progress string before each AI call.
+            Only used for graph dispatch.
 
-    Example:
-        >>> from pydantic import BaseModel
-        >>> from testdata_ai import generate_from_model
-        >>> class Product(BaseModel):
-        ...     name: str
-        ...     price: float
-        >>> data = generate_from_model(Product, count=5)
+    Returns:
+        :class:`GenerateResult` for str/type/dict-schema inputs,
+        :class:`RelationshipResult` for graph-dict and list-of-specs inputs.
 
-        >>> schema = {"title": "Widget", "properties": {"name": {"type": "string"}}}
-        >>> data = generate_from_model(schema, count=3)
+    Raises:
+        TypeError: If input type is not supported.
+        ValueError: If arguments are invalid (e.g. count < 1, bad context).
+        ValidationError: If generated records fail schema validation.
+
+    Examples::
+
+        result = generate("ecommerce_customer", count=20)
+        result = generate(MyModel, count=5)
+        result = generate({"properties": {...}}, count=3)
+        result = generate({"nodes": {"users": {"context": "ecommerce_customer", "count": 3}}})
+        result = generate([GenerateSpec("ecommerce_customer", 100), ...])
     """
-    return DataGenerator(locale=locale).generate_from_model(
-        model_or_schema, count, validate,
-        field_providers=field_providers,
-        unique_fields=unique_fields,
+    from testdata_ai.result_types import GenerateResult, RelationshipResult
+
+    gen = DataGenerator(
+        provider=provider,
+        model=model,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        api_key=api_key,
+        locale=locale,
     )
 
+    # str → context name
+    if isinstance(input, str):
+        records: List[Dict[str, Any]] = []
+        for batch in gen.generate_batched(input, count, batch_size, validate=validate):
+            records.extend(batch)
+        return GenerateResult(records)
 
-def generate_with_relationships(
-    graph: Dict[str, Any],
-    validate: bool = True,
-    locale: Optional[str] = None,
-) -> Dict[str, List[Dict[str, Any]]]:
-    """Convenience function: generate multiple related entity datasets.
+    # type (Pydantic model) or dict without "nodes" → generate_from_model
+    if isinstance(input, type) or (isinstance(input, dict) and "nodes" not in input):
+        records = gen.generate_from_model(
+            input, count, validate,
+            field_providers=field_providers,
+            unique_fields=unique_fields,
+        )
+        return GenerateResult(records)
 
-    Creates a new DataGenerator each call. For repeated use, instantiate
-    DataGenerator directly and call generate_with_relationships() on it.
+    # dict with "nodes" → relationship graph
+    if isinstance(input, dict) and "nodes" in input:
+        result = gen.generate_with_relationships(
+            input["nodes"], validate=validate, progress_callback=progress_callback
+        )
+        return RelationshipResult(result)
 
-    Example:
-        >>> from testdata_ai import generate_with_relationships
-        >>> result = generate_with_relationships({
-        ...     "users": {"context": "ecommerce_customer", "count": 3},
-        ...     "orders": {
-        ...         "context": "restaurant_order",
-        ...         "count": 10,
-        ...         "parent": "users",
-        ...         "fk_field": "user_id",
-        ...         "parent_pk": "email",
-        ...     },
-        ... })
-        >>> result["users"]   # 3 customer records
-        >>> result["orders"]  # 10 order records, each with user_id from a customer email
-    """
-    return DataGenerator(locale=locale).generate_with_relationships(graph, validate=validate)
+    # list[GenerateSpec] → parallel generation (sync wrapper)
+    if isinstance(input, list):
+        from testdata_ai.async_generator import generate_parallel
 
+        generator_kwargs: Dict[str, Any] = {}
+        if model is not None:
+            generator_kwargs["model"] = model
+        if temperature is not None:
+            generator_kwargs["temperature"] = temperature
+        if max_tokens is not None:
+            generator_kwargs["max_tokens"] = max_tokens
+        if api_key is not None:
+            generator_kwargs["api_key"] = api_key
 
-def generate_as_dataframe(
-    context: str,
-    count: int = 10,
-    validate: bool = True,
-    locale: Optional[str] = None,
-    flatten: bool = True,
-):
-    """Convenience function: generate and return as a pandas DataFrame.
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
 
-    Creates a new DataGenerator each call. For repeated use, instantiate
-    DataGenerator directly and call generate_as_dataframe() on it.
+        if loop is not None and loop.is_running():
+            raise RuntimeError(
+                "generate() with a list of GenerateSpec cannot be called from an async "
+                "context (event loop already running). "
+                "Use: result = await async_generate([...]) instead."
+            )
 
-    Example:
-        >>> from testdata_ai import generate_as_dataframe
-        >>> df = generate_as_dataframe('ecommerce_customer', count=20)
-        >>> df['email'].value_counts()
-    """
-    from testdata_ai.pandas_bridge import records_to_dataframe
-    records = DataGenerator(locale=locale).generate(context, count=count, validate=validate)
-    return records_to_dataframe(records, flatten=flatten)
+        result = asyncio.run(
+            generate_parallel(
+                input,
+                global_unique_fields=global_unique_fields,
+                provider=provider,
+                **generator_kwargs,
+            )
+        )
+        return RelationshipResult(result)
 
-
-def generate(
-    context: str,
-    count: int = 10,
-    batch_size: int = 10,
-    validate: bool = True,
-    locale: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    """Convenience function for one-off generation.
-
-    For count > batch_size, automatically splits into multiple AI calls
-    and returns the combined result.  Creates a new DataGenerator each call;
-    for repeated use, instantiate DataGenerator directly.
-
-    Example:
-        >>> from testdata_ai import generate
-        >>> customers = generate('ecommerce_customer', 20)
-        >>> many = generate('ecommerce_customer', 100, batch_size=20)
-    """
-    gen = DataGenerator(locale=locale)
-    results: List[Dict[str, Any]] = []
-    for batch in gen.generate_batched(context, count, batch_size, validate=validate):
-        results.extend(batch)
-    return results
+    raise TypeError(
+        f"Unsupported input type: {type(input).__name__}. "
+        "Expected: str (context name), type or dict (model/schema), "
+        "dict with 'nodes' key (graph), or list of GenerateSpec (parallel)."
+    )

@@ -133,7 +133,7 @@ class TestGenerateCmd:
     def test_generate_requires_context_or_schema_file(self, runner):
         result = runner.invoke(cli, ["generate"])
         assert result.exit_code != 0
-        assert "--context or --schema-file" in result.output
+        assert "Provide" in result.output
 
     def test_generate_context_and_schema_file_are_mutually_exclusive(self, runner, tmp_path):
         schema_file = tmp_path / "s.json"
