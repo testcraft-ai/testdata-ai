@@ -35,7 +35,7 @@ asciinema rec "$CAST" \
 
 echo ""
 echo "==> Converting to GIF ($GIF) ..."
-# The demo spinner uses directional arrows (←↖↑↗→↘↓↙) which are in
+# The demo spinner uses block elements (▁▂▃▄▅▆▇█) which are in
 # JetBrains Mono — agg's default font. No --font-dir/--font-family needed.
 agg \
     --theme monokai \

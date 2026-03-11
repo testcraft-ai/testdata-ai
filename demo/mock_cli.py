@@ -3,13 +3,14 @@
 
 Instead of calling any AI provider the mock:
   1. Patches DataGenerator.generate() to return pre-canned records.
-  2. Sleeps 0.8 s per call so the spinner is clearly visible in the GIF.
+  2. Sleeps 1.5 s per call so the spinner is clearly visible in the GIF.
   3. Returns exactly `count` records every time.
 
 Usage (mirrors the real CLI):
   python3 demo/mock_cli.py list-contexts
-  python3 demo/mock_cli.py generate --context ecommerce_customer --count 5
-  python3 demo/mock_cli.py generate --context ecommerce_customer --count 15 --batch-size 5 -o jsonl
+  python3 demo/mock_cli.py generate --context ecommerce_customer --count 3
+  python3 demo/mock_cli.py generate --context ecommerce_customer --count 4 --batch-size 2 -o jsonl
+  python3 demo/mock_cli.py generate --context hr_employee --count 3 -o sql --table employees
   python3 demo/mock_cli.py show-context banking_user
 """
 
@@ -146,8 +147,36 @@ _ECOMMERCE_CUSTOMERS = [
      "joined_date": "2020-12-09", "loyalty_tier": "gold"},
 ]
 
+_HR_EMPLOYEES = [
+    {"employee_id": "EMP-001042", "name": "Aisha Patel", "email": "a.patel@globecorp.com",
+     "department": "Engineering", "job_title": "Senior Software Engineer",
+     "hire_date": "2021-03-08", "salary": 128000, "employment_type": "full-time",
+     "manager": "Tomoko Hayashi", "location": "San Francisco, CA", "performance_rating": 5},
+    {"employee_id": "EMP-002187", "name": "Carlos Rivera", "email": "c.rivera@globecorp.com",
+     "department": "Product", "job_title": "Product Manager",
+     "hire_date": "2020-07-14", "salary": 135000, "employment_type": "full-time",
+     "manager": "Sarah Chen", "location": "New York, NY", "performance_rating": 4},
+    {"employee_id": "EMP-003356", "name": "Emma Johansson", "email": "e.johansson@globecorp.com",
+     "department": "Design", "job_title": "UX Designer",
+     "hire_date": "2022-11-01", "salary": 98000, "employment_type": "full-time",
+     "manager": "David Kim", "location": "Remote", "performance_rating": 4},
+    {"employee_id": "EMP-004521", "name": "Kwame Asante", "email": "k.asante@globecorp.com",
+     "department": "Data", "job_title": "Data Engineer",
+     "hire_date": "2023-02-20", "salary": 112000, "employment_type": "full-time",
+     "manager": "Tomoko Hayashi", "location": "Chicago, IL", "performance_rating": 3},
+    {"employee_id": "EMP-005670", "name": "Yuki Tanaka", "email": "y.tanaka@globecorp.com",
+     "department": "Engineering", "job_title": "Staff Engineer",
+     "hire_date": "2019-05-17", "salary": 165000, "employment_type": "full-time",
+     "manager": "Sarah Chen", "location": "Seattle, WA", "performance_rating": 5},
+    {"employee_id": "EMP-006811", "name": "Maria Santos", "email": "m.santos@globecorp.com",
+     "department": "Marketing", "job_title": "Growth Lead",
+     "hire_date": "2022-08-09", "salary": 105000, "employment_type": "full-time",
+     "manager": "Ana García", "location": "Austin, TX", "performance_rating": 4},
+]
+
 _FIXTURES: dict = {
     "ecommerce_customer": _ECOMMERCE_CUSTOMERS,
+    "hr_employee": _HR_EMPLOYEES,
 }
 
 # ---------------------------------------------------------------------------

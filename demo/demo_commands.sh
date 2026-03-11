@@ -2,7 +2,7 @@
 # Commands executed during the asciinema recording.
 #
 # Uses demo/mock_cli.py instead of the real `testdata-ai` CLI so that:
-#   - The spinner is visible (each AI "call" takes exactly 0.8 s)
+#   - The spinner is visible (each AI "call" takes exactly 1.5 s)
 #   - No real API call or Ollama instance is needed
 #   - The GIF shows only meaningful output, not loading waits
 
@@ -25,14 +25,18 @@ sleep 1.0
 _cmd "$MOCK list-contexts"
 sleep 2.0
 
-# 2. Generate 3 records as pretty JSON — output scrolls, shows data richness
+# 2. Generate 3 records as pretty JSON — shows diverse global data
 _cmd "$MOCK generate --context ecommerce_customer --count 3"
 sleep 2.5
 
-# 3. Batch generation: 9 records in batches of 3 — records appear progressively as compact JSONL
-_cmd "$MOCK generate --context ecommerce_customer --count 9 --batch-size 3 -o jsonl"
+# 3. Batch generation: 4 records in batches of 2 — records stream progressively as JSONL
+_cmd "$MOCK generate --context ecommerce_customer --count 4 --batch-size 2 -o jsonl"
 sleep 2.0
 
-# 4. Show schema for a different context — instant, no AI call
+# 4. SQL output — generate employee records as INSERT statements
+_cmd "$MOCK generate --context hr_employee --count 3 -o sql --table employees"
+sleep 2.0
+
+# 5. Show schema for a context — instant, no AI call
 _cmd "$MOCK show-context banking_user"
 sleep 1.5
